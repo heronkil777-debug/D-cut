@@ -12,10 +12,10 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 eframe.workspace = true
-editor-core = { path = "../editor-core" }
-editor-media = { path = "../editor-media" }
-editor-project = { path = "../editor-project" }
-editor-render = { path = "../editor-render" }
+editor-core.workspace = true
+editor-media.workspace = true
+editor-project.workspace = true
+editor-render.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 cpal = "0.18.2"
