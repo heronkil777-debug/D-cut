@@ -527,7 +527,14 @@ pub fn build_timeline_export_command(
     let mut command = Command::new(ffmpeg_program());
     command.args(["-hide_banner", "-nostdin", "-y", "-loglevel", "error"]);
     if let ExportEncoder::Vaapi { device, .. } = encoder {
-        command.arg("-vaapi_device").arg(device);
+        // Explicit device for the filter graph (`hwupload`); `-vaapi_device` alone failed to
+        // reach the graph when frames arrive on a pipe (FFmpeg 7.1/9: ENOSYS on reinit).
+        let mut init = std::ffi::OsString::from("vaapi=va:");
+        init.push(device.as_os_str());
+        command
+            .arg("-init_hw_device")
+            .arg(init)
+            .args(["-filter_hw_device", "va"]);
     }
     command
         .args(&graph.input_args)
@@ -641,7 +648,22 @@ impl RgbaEncoder {
             .stdin
             .as_mut()
             .ok_or(MediaError::InvalidExport("encoder input already closed"))?;
-        stdin.write_all(rgba).map_err(MediaError::WaveformIo)
+        if let Err(error) = stdin.write_all(rgba) {
+            // The encoder exited: report its stderr instead of a bare "broken pipe".
+            drop(self.stdin.take());
+            let _ = self.child.wait();
+            let stderr = self
+                .stderr
+                .take()
+                .and_then(|handle| handle.join().ok())
+                .unwrap_or_default();
+            return Err(MediaError::Failed {
+                program: ffmpeg_program().to_string_lossy().into_owned(),
+                status: format!("input closed ({error})"),
+                stderr,
+            });
+        }
+        Ok(())
     }
 
     /// Closes the input and waits for FFmpeg to finish writing the file.
@@ -702,7 +724,12 @@ pub fn spawn_rgba_encoder(
     };
     let upload = match encoder {
         ExportEncoder::X264 { .. } => "format=yuv420p",
-        ExportEncoder::Vaapi { .. } => "format=nv12,hwupload",
+        // Tag the frames with the output color properties *before* uploading: otherwise FFmpeg
+        // tries to insert a range/matrix conversion after `hwupload`, which cannot run on
+        // VAAPI surfaces ("Impossible to convert ... hwupload" / ENOSYS).
+        ExportEncoder::Vaapi { .. } => {
+            "format=nv12,setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709,hwupload"
+        }
     };
     // RGBA -> limited-range YUV with the same matrix used to decode, so the YUV values of the
     // source survive the RGBA round trip exactly (measured: ~48 dB PSNR vs. 25.8 dB with an
@@ -714,7 +741,14 @@ pub fn spawn_rgba_encoder(
     let mut command = Command::new(ffmpeg_program());
     command.args(["-hide_banner", "-nostdin", "-y", "-loglevel", "error"]);
     if let ExportEncoder::Vaapi { device, .. } = encoder {
-        command.arg("-vaapi_device").arg(device);
+        // Explicit device for the filter graph (`hwupload`); `-vaapi_device` alone failed to
+        // reach the graph when frames arrive on a pipe (FFmpeg 7.1/9: ENOSYS on reinit).
+        let mut init = std::ffi::OsString::from("vaapi=va:");
+        init.push(device.as_os_str());
+        command
+            .arg("-init_hw_device")
+            .arg(init)
+            .args(["-filter_hw_device", "va"]);
     }
     command
         .args(&graph.input_args)

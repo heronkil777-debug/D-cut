@@ -287,3 +287,46 @@ fn gpu_path_without_text_matches_ffmpeg_only_path() {
     assert!(average >= 38.0, "GPU vs FFmpeg-only PSNR {average} dB");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn vaapi_export_with_text_works_when_a_render_node_exists() {
+    let device = PathBuf::from("/dev/dri/renderD128");
+    if !available() || !device.exists() {
+        eprintln!("skipping: ffmpeg, GPU adapter or VAAPI render node unavailable");
+        return;
+    }
+    let dir = dir("vaapi");
+    let format = ProjectFormat {
+        width: 720,
+        height: 720,
+        ..ProjectFormat::default()
+    };
+    let mut project = project(&dir, format);
+    project.text_overlays.push(TextOverlay {
+        id: 300,
+        track_id: Some(2),
+        start_frame: 0,
+        duration_frames: 60,
+        text: "VAAPI".into(),
+        x: 0.5,
+        y: 0.5,
+        font_size: 100.0,
+        color: [1.0, 1.0, 1.0, 1.0],
+    });
+    let output = dir.join("vaapi.mp4");
+    let report = export_project(
+        &project,
+        &output,
+        ExportOptions {
+            encoder: ExportEncoder::Vaapi { device, qp: 22 },
+            force_gpu: false,
+            device: None,
+        },
+        &Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .expect("VAAPI export");
+    assert_eq!(report.path, ExportPath::GpuComposite);
+    assert_eq!(probe(&output), "h264,720,720,yuv420p,60\naac,94");
+    let _ = std::fs::remove_dir_all(dir);
+}

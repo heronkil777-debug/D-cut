@@ -1,36 +1,38 @@
 # Status do projeto
 
 - **Data:** 2026-11-11
-- **Produto:** D-cut; caminho D.
-- **Estado honesto:** editor de corte **utilizável numa timeline simples** (V1 + A1 + A2): importar,
-  prévia com frames reais, play com áudio, dividir/aparar/mover/excluir/ripple com undo/redo,
-  salvar/abrir, exportar MP4 H.264/AAC. **Nenhuma fase do briefing está 100% aceita** (faltam CI
-  verificado, AppImage em container, FFmpeg embutido, texto, efeitos etc.). Nenhuma tag `phase-N`.
+- **Produto:** D-cut; caminho D. Branch local `master` (repo recriado do ZIP).
+- **Estado:** editor de corte utilizável + Fase 3 (texto/legendas na GPU, multi-faixa). Fases 1–3 com
+  critérios atendidos localmente; **sem tags `phase-N`** porque o CI do GitHub nunca rodou (sem push).
+- **Divergências aprovadas:** composição de vídeo via grafo FFmpeg (provisória, comparação em DECISIONS);
+  texto/legendas compostos no wgpu (`editor-render`) como pede o briefing.
 
-## Verificado nesta sessão (comando → resultado)
+## Verificado (comando → resultado)
 
-- `cargo build --workspace` → ok. `cargo fmt --all --check` → ok.
-  `cargo clippy --workspace --all-targets -- -D warnings` → ok. `cargo test --workspace` → 28 testes ok:
-  - core: proptest de sequências aleatórias (add/split/delete/ripple/trim/move) com undo de cada passo e redo total; clipes vinculados; limites de trim; validação de sobreposição; plano de render.
-  - project: roundtrip JSON, caminhos relativos, versão inválida.
-  - media (FFmpeg real 9.0.2): export de timeline editada validado com ffprobe (h264 1920×1080 yuv420p 30/1, 60 frames exatos, AAC 48 kHz, duração 2,0 s, moov antes de mdat, frame exportado = frame-fonte correto); 20 seeks aleatórios frame-exatos; clipe com rotação 90° (720×1280, preenche canvas 9:16) e clipe VFR (30→10 fps) exportados com contagem de frames exata.
-- `scripts/test-media-workflow.sh` → ok.
-- GUI no Wayland (MangoWC, Vega 8/RADV), por screenshot (`grim`): prévia mostra frame real com rotação aplicada; thumbnails na faixa de vídeo; waveform no áudio; layout corrigido para janela estreita.
-- Playback medido (`D_CUT_AUTOTEST`, log): 1080p30, 63,8 s com relógio de áudio → 1915 frames, 0 perdidos, 0 underruns, **deriva 3,4 ms**, |offset| máx 16,9 ms. Fecha com exit 0 em Wayland e em X11 (Xwayland, `DISPLAY=:1`).
-- AppImage (`scripts/build-appimage.sh --host`) → `build/appimage/D-cut-x86_64.AppImage`, ~8,4 MB:
-  `--cli --version` via FUSE ok; `--appimage-extract-and-run --cli render-project` → 120 frames, 4,000 s, h264 High yuv420p, AAC 48 kHz estéreo, faststart; perfil `--fast` (VAAPI) → 120 frames ok; GUI do AppImage abriu o projeto, tocou 4 s (120 frames, 0 perdidos) e fechou com exit 0.
+- `cargo fmt --all --check` ✅ · `cargo clippy --workspace --all-targets -- -D warnings` ✅ ·
+  `cargo deny check` ✅ (advisories/bans/licenses/sources ok; exceção justificada RUSTSEC-2026-0192).
+- `cargo test --workspace` ✅ com **FFmpeg 9.0.2 (host)** e com **FFmpeg 7.1.5 (embutido)**: core (proptest de edição,
+  faixas, texto), project, media (export validado por ffprobe, 20 seeks frame-exatos, rotação/VFR, stream RGBA com
+  contagem exata), text (centralização, contorno, escala, tempo), render (composição GPU headless), export
+  (título + SRT queimados em 9:16 e 1:1 com posição/tempo checados; caminho GPU ≥ 38 dB vs FFmpeg-only).
+- Playback 1080p30 63,8 s (Vega 8): 0 perdidos, 0 underruns, deriva A/V 3,4 ms. Wayland e X11 fecham com exit 0.
+- GUI (screenshot): prévia com título e legenda compostos na GPU sobre o frame real (9:16).
+- Comparação FFmpeg-only × wgpu medida (DECISIONS): 79,8 vs 32–38 fps no export 1080p; PSNR entre saídas 43,2 dB.
+- AppImage portátil (container Ubuntu 22.04, Podman rootless `--network=host`): ~27 MB, glibc ≥ 2.35,
+  FFmpeg 7.1.5 GPL embutido (x264, x265, SVT-AV1, VAAPI; sem nonfree), licenças + manifesto em
+  `usr/share/licenses/ffmpeg/`. Testes do artefato no relatório da sessão.
 
 ## Não verificado / não funciona
 
-- Interação real com mouse/teclado na GUI (arrastar trim/mover, diálogos, atalhos, salvar pela UI) **não foi exercitada por mim** — só a lógica (testes) e o render (screenshot). Ver checklist no relatório.
-- Container Ubuntu 22.04: aguardando o usuário instalar Podman (`sudo pacman -S podman`); script pronto (`--userns=keep-id`). AppImage atual (host) exige glibc ≥ 2.44 e **não é final** sem FFmpeg 7+ embutido.
-- FFmpeg não está embutido no AppImage (usa o do sistema). `cargo deny` não instalado → não rodado. CI do GitHub não verificado.
-- Latência do dispositivo de áudio não compensada. Sem autosave. i18n só parcial (catálogo pt-BR em `strings.rs`).
-- Fora do feito: texto/legendas no render, efeitos/transições GPU, keyframes/velocidade, multi-faixa de vídeo com overlay (só prioridade da faixa), legenda automática, proxies, HDR→SDR com aviso.
-- Composição feita no FFmpeg, não no wgpu (ver DECISIONS) — decisão pendente do usuário antes da Fase 3.
+- Interação real de mouse/teclado na GUI (arrastar, diálogos, edição de texto) — só lógica testada + screenshots.
+- RX 6650 XT (desktop): nada medido lá ainda. CI do GitHub não rodado.
+- Prévia converte YUV→RGB com BT.601 (desvio leve de cor só na tela; export preserva os valores YUV).
+- Texto: sem fontes do sistema, sem animação/keyframe, sem caixa de fundo; textos sobrepostos na mesma faixa ficam
+  desenhados um sobre o outro na timeline. Multi-faixa de vídeo é "faixa de cima cobre" (sem PiP/transparência).
+- Fases 4–7 não iniciadas (efeitos, legenda automática, keyframes, transições, proxies, autosave, i18n completo).
 
 ## Próximo passo
 
-1. Usuário testar o checklist manual no Arch e decidir backend FFmpeg/composição.
-2. Habilitar Podman (ou grupo docker) para gerar o AppImage portátil; decidir FFmpeg embutido.
-3. Fase 3: texto/títulos/SRT no caminho de render compartilhado.
+1. Usuário rodar o checklist do relatório no Arch (desktop RX 6650 XT e notebook).
+2. YUV↔RGB no shader (remove o tráfego RGBA e o desvio de cor) e repetir a comparação FFmpeg × wgpu.
+3. Fase 4 (motor de efeitos) após "ok".
