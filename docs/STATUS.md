@@ -20,7 +20,11 @@
 - Comparação FFmpeg-only × wgpu medida (DECISIONS): 79,8 vs 32–38 fps no export 1080p; PSNR entre saídas 43,2 dB.
 - AppImage portátil (container Ubuntu 22.04, Podman rootless `--network=host`): ~27 MB, glibc ≥ 2.35,
   FFmpeg 7.1.5 GPL embutido (x264, x265, SVT-AV1, VAAPI; sem nonfree), licenças + manifesto em
-  `usr/share/licenses/ffmpeg/`. Testes do artefato no relatório da sessão.
+  `usr/share/licenses/ffmpeg/`. Artefato: 27.859.448 bytes, sha256 `a6a0379f…c2bdd7`. Testado com um `ffmpeg`
+  falso no PATH (prova que usa o embutido): render 9:16 com texto via FUSE, via `--appimage-extract-and-run` e
+  VAAPI → 120 frames, 4,000 s, h264 yuv420p, AAC 48 kHz, faststart; GUI tocou 120 frames (0 perdidos) e fechou com exit 0.
+- Bugs achados e corrigidos testando com FFmpeg 7.1.5: frames descartados no stream RAW (`-fps_mode passthrough`) e
+  VAAPI no caminho GPU (propriedades de cor marcadas antes do `hwupload`). Suíte inteira passa com 7.1.5 e 9.0.2.
 
 ## Não verificado / não funciona
 
