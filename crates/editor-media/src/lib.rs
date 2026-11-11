@@ -12,6 +12,18 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
+pub mod timeline;
+
+/// FFmpeg executable: `D_CUT_FFMPEG` (set by the AppImage when it bundles FFmpeg) or `ffmpeg`.
+pub fn ffmpeg_program() -> std::ffi::OsString {
+    std::env::var_os("D_CUT_FFMPEG").unwrap_or_else(|| "ffmpeg".into())
+}
+
+/// ffprobe executable: `D_CUT_FFPROBE` or `ffprobe`.
+pub fn ffprobe_program() -> std::ffi::OsString {
+    std::env::var_os("D_CUT_FFPROBE").unwrap_or_else(|| "ffprobe".into())
+}
+
 const MAX_FRAME_BYTES: usize = 128 * 1024 * 1024;
 const MAX_FRAME_SIDE: u32 = 8192;
 
@@ -47,6 +59,8 @@ pub enum MediaError {
     WaveformIo(#[source] std::io::Error),
     #[error("invalid export request: {0}")]
     InvalidExport(&'static str),
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +149,7 @@ struct ProbeSideData {
 
 /// Runs ffprobe and returns normalized stream information without copying media into the project.
 pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo, MediaError> {
-    probe_with(OsStr::new("ffprobe"), path)
+    probe_with(&ffprobe_program(), path)
 }
 
 /// Injectable executable variant for installations that use a nonstandard ffprobe location.
@@ -289,7 +303,28 @@ pub fn decode_rgba_frame(
     path: impl AsRef<Path>,
     timestamp_seconds: f64,
 ) -> Result<(u32, u32, Vec<u8>), MediaError> {
-    decode_rgba_frame_with(OsStr::new("ffmpeg"), path, timestamp_seconds)
+    decode_rgba_frame_with(&ffmpeg_program(), path, timestamp_seconds)
+}
+
+/// Decodes one RGBA frame scaled to fit inside `max_width`×`max_height` (aspect preserved).
+/// Used for timeline thumbnails. Call from a worker thread.
+pub fn decode_thumbnail(
+    path: impl AsRef<Path>,
+    video: &VideoStreamInfo,
+    timestamp_seconds: f64,
+    max_width: u32,
+    max_height: u32,
+) -> Result<(u32, u32, Vec<u8>), MediaError> {
+    let scale = (f64::from(max_width) / f64::from(video.width))
+        .min(f64::from(max_height) / f64::from(video.height))
+        .min(1.0);
+    let even = |value: f64| ((value.round() as u32) / 2 * 2).max(2);
+    let scaled = VideoStreamInfo {
+        width: even(f64::from(video.width) * scale),
+        height: even(f64::from(video.height) * scale),
+        ..video.clone()
+    };
+    decode_rgba_frame_with_video_info(&ffmpeg_program(), path, timestamp_seconds, &scaled)
 }
 
 pub fn decode_rgba_frame_with(
@@ -424,7 +459,7 @@ pub fn compute_waveform(
     let sample_count = expected_samples as u64;
     let samples_per_bucket = sample_count.div_ceil(bucket_count as u64).max(1);
     let duration_arg = format!("{duration:.9}");
-    let mut child = Command::new("ffmpeg")
+    let mut child = Command::new(ffmpeg_program())
         .args(["-hide_banner", "-loglevel", "error", "-nostdin"])
         .arg("-i")
         .arg(path)
@@ -533,7 +568,10 @@ pub fn build_export_command(request: &ExportRequest) -> Result<Command, MediaErr
             "time range must be finite, non-negative, and non-empty",
         ));
     }
-    if request.width < 2 || request.height < 2 || request.width % 2 != 0 || request.height % 2 != 0
+    if request.width < 2
+        || request.height < 2
+        || !request.width.is_multiple_of(2)
+        || !request.height.is_multiple_of(2)
     {
         return Err(MediaError::InvalidExport(
             "H.264 yuv420p dimensions must be positive even values",
@@ -557,7 +595,7 @@ pub fn build_export_command(request: &ExportRequest) -> Result<Command, MediaErr
         "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={}",
         request.width, request.height, request.width, request.height, rate,
     );
-    let mut command = Command::new("ffmpeg");
+    let mut command = Command::new(ffmpeg_program());
     command.args(["-hide_banner", "-nostdin", "-y"]);
     if let ExportProfile::Vaapi { device, .. } = &request.profile {
         command.args(["-vaapi_device"]).arg(device);

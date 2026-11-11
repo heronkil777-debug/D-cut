@@ -78,11 +78,12 @@ fn run() -> Result<()> {
             }
             Ok(())
         }
+        Some("render-project") => run_render_project(args),
         Some("export-quality") => run_export(args, false),
         Some("export-vaapi") => run_export(args, true),
         Some("--help" | "-h") | None => {
             println!(
-                "D-cut local project and media tools\n\nUsage:\n  d-cut-cli --version\n  d-cut-cli validate-project <project.dcut>\n  d-cut-cli import-srt <input.srt> <output.dcut> <fps-num> <fps-den>\n  d-cut-cli probe <media-file>\n  d-cut-cli export-quality <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <crf>\n  d-cut-cli export-vaapi <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <device> <qp>\n\nFFmpeg and ffprobe must be installed separately. Rendering a multi-track project is not implemented yet."
+                "D-cut local project and media tools\n\nUsage:\n  d-cut-cli --version\n  d-cut-cli validate-project <project.dcut>\n  d-cut-cli import-srt <input.srt> <output.dcut> <fps-num> <fps-den>\n  d-cut-cli probe <media-file>\n  d-cut-cli render-project <project.dcut> <output.mp4> [--fast] [--crf N] [--preset NAME] [--qp N] [--vaapi-device PATH]\n  d-cut-cli export-quality <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <crf>\n  d-cut-cli export-vaapi <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <device> <qp>\n\nrender-project uses the same FFmpeg timeline graph as the editor export: H.264 + AAC 48 kHz,\nyuv420p, BT.709, +faststart. --fast uses VAAPI (h264_vaapi); the default uses libx264 CRF 20.\nFFmpeg and ffprobe must be installed (or set D_CUT_FFMPEG / D_CUT_FFPROBE)."
             );
             Ok(())
         }
@@ -102,14 +103,79 @@ fn run_import_srt(mut args: impl Iterator<Item = String>) -> Result<()> {
     }
     let source = std::fs::read_to_string(&input)
         .with_context(|| format!("could not read subtitle file {input}"))?;
-    let mut project = editor_core::Project::default();
-    project.text_overlays = editor_project::parse_srt(&source, 1, None, numerator, denominator)?;
+    let project = editor_core::Project {
+        text_overlays: editor_project::parse_srt(&source, 1, None, numerator, denominator)?,
+        ..editor_core::Project::default()
+    };
     editor_project::save(&output, &project)
         .with_context(|| format!("could not save project {output}"))?;
     println!(
         "Imported {} subtitle cues into {}",
         project.text_overlays.len(),
         output
+    );
+    Ok(())
+}
+
+fn run_render_project(mut args: impl Iterator<Item = String>) -> Result<()> {
+    let project_path = args
+        .next()
+        .context("usage: d-cut-cli render-project <project.dcut> <output.mp4> [options]")?;
+    let output = PathBuf::from(args.next().context("missing output path")?);
+    let mut fast = false;
+    let mut crf: u8 = 20;
+    let mut preset = "medium".to_owned();
+    let mut qp: u8 = 22;
+    let mut device = PathBuf::from("/dev/dri/renderD128");
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--fast" => fast = true,
+            "--crf" => crf = parse_next(&mut args, "CRF")?,
+            "--preset" => preset = args.next().context("missing preset")?,
+            "--qp" => qp = parse_next(&mut args, "QP")?,
+            "--vaapi-device" => {
+                device = PathBuf::from(args.next().context("missing VAAPI device")?);
+            }
+            other => bail!("unknown option {other}"),
+        }
+    }
+    let project = editor_project::load(&project_path)
+        .with_context(|| format!("could not load project {project_path}"))?;
+    let total = project.duration_frames();
+    if total == 0 {
+        bail!("the project timeline is empty");
+    }
+    let job = editor_media::timeline::TimelineRender::from_project(
+        &project,
+        0,
+        total,
+        project.format.width,
+        project.format.height,
+    )?;
+    let encoder = if fast {
+        editor_media::timeline::ExportEncoder::Vaapi { device, qp }
+    } else {
+        editor_media::timeline::ExportEncoder::X264 { crf, preset }
+    };
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut last_percent = None;
+    editor_media::timeline::export_timeline(&job, &encoder, &output, &cancel, |progress| {
+        let percent = (progress.fraction * 100.0).floor() as u32;
+        if last_percent != Some(percent) {
+            last_percent = Some(percent);
+            eprint!("\rrendering… {percent:3}%");
+        }
+    })
+    .context("export failed")?;
+    eprintln!();
+    let info = editor_media::probe(&output).context("could not probe the exported file")?;
+    println!(
+        "Rendered {} ({:.3} s, {} frames at {}/{} fps)",
+        output.display(),
+        info.duration_seconds,
+        total,
+        project.format.frame_rate_numerator,
+        project.format.frame_rate_denominator
     );
     Ok(())
 }

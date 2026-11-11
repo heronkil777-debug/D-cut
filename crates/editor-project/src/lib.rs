@@ -33,6 +33,8 @@ pub enum ProjectFileError {
 }
 
 /// Loads, parses, and validates a project document.
+/// Relative media paths are resolved against the project file's directory, so the returned
+/// project always holds absolute media paths.
 pub fn load(path: impl AsRef<Path>) -> Result<Project, ProjectFileError> {
     let path = path.as_ref();
     let file = OpenOptions::new()
@@ -42,15 +44,32 @@ pub fn load(path: impl AsRef<Path>) -> Result<Project, ProjectFileError> {
             path: path.to_owned(),
             source,
         })?;
-    let project: Project = serde_json::from_reader(BufReader::new(file))?;
+    let mut project: Project = serde_json::from_reader(BufReader::new(file))?;
     project.validate()?;
+    let base = project_directory(path);
+    for media in &mut project.media {
+        media.path = resolve_media_path(&base, &media.path);
+    }
+    for proxy in &mut project.proxies {
+        proxy.path = resolve_media_path(&base, &proxy.path);
+    }
     Ok(project)
 }
 
 /// Validates and atomically replaces a project file using a temporary sibling file.
+/// Absolute media paths are stored relative to the project file's directory.
 pub fn save(path: impl AsRef<Path>, project: &Project) -> Result<(), ProjectFileError> {
     let path = path.as_ref();
     project.validate()?;
+    let base = project_directory(path);
+    let mut project = project.clone();
+    for media in &mut project.media {
+        media.path = portable_media_path(&base, &media.path);
+    }
+    for proxy in &mut project.proxies {
+        proxy.path = portable_media_path(&base, &proxy.path);
+    }
+    let project = &project;
     let temporary_path =
         temporary_sibling(path).ok_or_else(|| ProjectFileError::InvalidPath(path.to_owned()))?;
     let result = write_temporary(&temporary_path, project).and_then(|()| {
@@ -63,6 +82,79 @@ pub fn save(path: impl AsRef<Path>, project: &Project) -> Result<(), ProjectFile
         let _ = fs::remove_file(&temporary_path);
     }
     result
+}
+
+fn project_directory(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(path))
+            .unwrap_or_else(|_| path.to_owned())
+    };
+    absolute
+        .parent()
+        .map(Path::to_owned)
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+fn resolve_media_path(base: &Path, stored: &str) -> String {
+    let stored_path = Path::new(stored);
+    if stored_path.is_absolute() {
+        return stored.to_owned();
+    }
+    normalize(&base.join(stored_path))
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn portable_media_path(base: &Path, media: &str) -> String {
+    let media_path = Path::new(media);
+    if !media_path.is_absolute() {
+        return media.to_owned();
+    }
+    relative_path(base, &normalize(media_path))
+        .map(|relative| relative.to_string_lossy().into_owned())
+        .unwrap_or_else(|| media.to_owned())
+}
+
+/// Lexically removes `.` and `..` components (does not touch the file system).
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                result.pop();
+            }
+            other => result.push(other.as_os_str()),
+        }
+    }
+    result
+}
+
+/// Relative path from directory `base` to `target`; both must be absolute.
+fn relative_path(base: &Path, target: &Path) -> Option<PathBuf> {
+    let base = normalize(base);
+    let base_parts: Vec<_> = base.components().collect();
+    let target_parts: Vec<_> = target.components().collect();
+    if base_parts.first() != target_parts.first() {
+        return None;
+    }
+    let common = base_parts
+        .iter()
+        .zip(&target_parts)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut relative = PathBuf::new();
+    for _ in common..base_parts.len() {
+        relative.push("..");
+    }
+    for part in &target_parts[common..] {
+        relative.push(part.as_os_str());
+    }
+    Some(relative)
 }
 
 fn write_temporary(path: &Path, project: &Project) -> Result<(), ProjectFileError> {
@@ -121,6 +213,53 @@ mod tests {
         let loaded = load(&path).expect("saved project loads");
         assert_eq!(loaded, project);
         fs::remove_file(path).expect("test project is removed");
+    }
+
+    #[test]
+    fn media_paths_are_stored_relative_and_resolved_on_load() {
+        use editor_core::{Clip, MediaAsset, Track, TrackKind};
+        let directory = std::env::temp_dir().join(format!(
+            "d-cut-rel-{}-{}",
+            std::process::id(),
+            temporary_path().display().to_string().len()
+        ));
+        let project_dir = directory.join("projects");
+        fs::create_dir_all(&project_dir).expect("dirs");
+        let media_path = directory.join("media/clip one.mp4");
+        let project = Project {
+            media: vec![MediaAsset {
+                id: 1,
+                path: media_path.display().to_string(),
+                content_hash: None,
+                duration_frames: 10,
+                width: 2,
+                height: 2,
+                has_video: true,
+                has_audio: false,
+                rotation_degrees: 0,
+            }],
+            tracks: vec![Track {
+                id: 2,
+                name: "V1".into(),
+                kind: TrackKind::Video,
+                clips: vec![Clip {
+                    id: 3,
+                    media_id: 1,
+                    timeline_start_frame: 0,
+                    source_start_frame: 0,
+                    duration_frames: 10,
+                    link_group: None,
+                }],
+            }],
+            ..Project::default()
+        };
+        let project_path = project_dir.join("test.dcut");
+        save(&project_path, &project).expect("saves");
+        let raw = fs::read_to_string(&project_path).expect("reads");
+        assert!(raw.contains("../media/clip one.mp4"), "{raw}");
+        let loaded = load(&project_path).expect("loads");
+        assert_eq!(loaded, project);
+        fs::remove_dir_all(directory).expect("cleanup");
     }
 
     #[test]

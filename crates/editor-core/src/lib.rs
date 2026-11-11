@@ -7,6 +7,16 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod edit;
+mod plan;
+
+pub use edit::{
+    TrimEdge, add_media_clips_command, clips_at_frame, delete_clips_command, find_clip,
+    linked_clip_ids, move_command, move_limits, next_free_id, split_at_command, trim_command,
+    trim_limits, unlink_command,
+};
+pub use plan::{PlanSegment, SegmentSource, audio_plans, video_plan};
+
 /// The product name shown in project metadata and command-line output.
 pub const PRODUCT_NAME: &str = "D-cut";
 /// Current on-disk project schema version.
@@ -41,6 +51,22 @@ impl ProjectFormat {
     /// Returns the frame rate as a floating-point value for display and playback scheduling.
     pub fn frames_per_second(self) -> f64 {
         f64::from(self.frame_rate_numerator) / f64::from(self.frame_rate_denominator.max(1))
+    }
+
+    /// Converts a project frame index to seconds using the exact rational frame rate.
+    pub fn frames_to_seconds(self, frames: u64) -> f64 {
+        frames as f64 * f64::from(self.frame_rate_denominator.max(1))
+            / f64::from(self.frame_rate_numerator.max(1))
+    }
+
+    /// Converts seconds to the nearest project frame (negative and non-finite inputs map to 0).
+    pub fn seconds_to_frame(self, seconds: f64) -> u64 {
+        let frames = seconds * self.frames_per_second();
+        if frames.is_finite() && frames > 0.0 {
+            frames.round() as u64
+        } else {
+            0
+        }
     }
 }
 
@@ -86,6 +112,9 @@ pub struct Clip {
     pub timeline_start_frame: u64,
     pub source_start_frame: u64,
     pub duration_frames: u64,
+    /// Clips sharing a link group (for example a video clip and its audio) are edited together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_group: Option<u64>,
 }
 
 impl Clip {
@@ -304,10 +333,18 @@ impl Project {
             if !ids.insert(track.id) {
                 return Err(CoreError::DuplicateId(track.id));
             }
+            let mut previous_end = 0_u64;
             for clip in &track.clips {
                 if !ids.insert(clip.id) {
                     return Err(CoreError::DuplicateId(clip.id));
                 }
+                if clip.timeline_start_frame < previous_end {
+                    return Err(CoreError::InvalidClip(
+                        clip.id,
+                        "clips on a track must be sorted and must not overlap",
+                    ));
+                }
+                previous_end = clip.timeline_end_frame().unwrap_or(u64::MAX);
                 let media = self
                     .media
                     .iter()
@@ -354,16 +391,15 @@ impl Project {
             if !ids.insert(overlay.id) {
                 return Err(CoreError::DuplicateId(overlay.id));
             }
-            if let Some(track_id) = overlay.track_id {
-                if self
+            if let Some(track_id) = overlay.track_id
+                && self
                     .track(track_id)
                     .is_none_or(|track| track.kind != TrackKind::Subtitle)
-                {
-                    return Err(CoreError::InvalidOverlay(
-                        overlay.id,
-                        "subtitle overlay track is missing or has the wrong kind",
-                    ));
-                }
+            {
+                return Err(CoreError::InvalidOverlay(
+                    overlay.id,
+                    "subtitle overlay track is missing or has the wrong kind",
+                ));
             }
             if overlay.duration_frames == 0
                 || overlay
@@ -477,45 +513,125 @@ impl Project {
     pub fn track(&self, track_id: u64) -> Option<&Track> {
         self.tracks.iter().find(|track| track.id == track_id)
     }
+
+    pub fn media_asset(&self, media_id: u64) -> Option<&MediaAsset> {
+        self.media.iter().find(|asset| asset.id == media_id)
+    }
+
+    /// Exclusive end frame of the last clip on any track (0 for an empty timeline).
+    pub fn duration_frames(&self) -> u64 {
+        self.tracks
+            .iter()
+            .flat_map(|track| track.clips.iter())
+            .filter_map(Clip::timeline_end_frame)
+            .max()
+            .unwrap_or(0)
+    }
 }
 
-/// Reversible replacement of one track's clip sequence. The expected snapshot prevents stale edits.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A reversible project edit. Every user edit is expressed as one of these commands.
+/// The `expected` snapshots prevent applying stale edits to a project that changed meanwhile.
+#[derive(Debug, Clone, PartialEq)]
 pub enum EditCommand {
     ReplaceTrackClips {
         track_id: u64,
         expected: Vec<Clip>,
         replacement: Vec<Clip>,
     },
+    ReplaceMedia {
+        expected: Vec<MediaAsset>,
+        replacement: Vec<MediaAsset>,
+    },
+    SetFormat {
+        expected: ProjectFormat,
+        replacement: ProjectFormat,
+    },
+    /// Applies all commands in order; if one fails, the already applied ones are rolled back.
+    Batch(Vec<EditCommand>),
 }
 
 impl EditCommand {
     /// Applies this command and returns its inverse for undo/redo.
+    /// On error, the project is left unchanged.
     pub fn apply(self, project: &mut Project) -> Result<Self, CoreError> {
-        let Self::ReplaceTrackClips {
-            track_id,
-            expected,
-            replacement,
-        } = self;
-        let track_index = project
-            .tracks
-            .iter()
-            .position(|track| track.id == track_id)
-            .ok_or(CoreError::MissingTrack(track_id))?;
-        if project.tracks[track_index].clips != expected {
-            return Err(CoreError::StaleCommand(track_id));
+        match self {
+            Self::ReplaceTrackClips {
+                track_id,
+                expected,
+                replacement,
+            } => {
+                let track_index = project
+                    .tracks
+                    .iter()
+                    .position(|track| track.id == track_id)
+                    .ok_or(CoreError::MissingTrack(track_id))?;
+                if project.tracks[track_index].clips != expected {
+                    return Err(CoreError::StaleCommand(track_id));
+                }
+                let old_clips =
+                    std::mem::replace(&mut project.tracks[track_index].clips, replacement.clone());
+                if let Err(error) = project.validate() {
+                    project.tracks[track_index].clips = old_clips;
+                    return Err(error);
+                }
+                Ok(Self::ReplaceTrackClips {
+                    track_id,
+                    expected: replacement,
+                    replacement: old_clips,
+                })
+            }
+            Self::ReplaceMedia {
+                expected,
+                replacement,
+            } => {
+                if project.media != expected {
+                    return Err(CoreError::StaleProject);
+                }
+                let old = std::mem::replace(&mut project.media, replacement.clone());
+                if let Err(error) = project.validate() {
+                    project.media = old;
+                    return Err(error);
+                }
+                Ok(Self::ReplaceMedia {
+                    expected: replacement,
+                    replacement: old,
+                })
+            }
+            Self::SetFormat {
+                expected,
+                replacement,
+            } => {
+                if project.format != expected {
+                    return Err(CoreError::StaleProject);
+                }
+                project.format = replacement;
+                if let Err(error) = project.validate() {
+                    project.format = expected;
+                    return Err(error);
+                }
+                Ok(Self::SetFormat {
+                    expected: replacement,
+                    replacement: expected,
+                })
+            }
+            Self::Batch(commands) => {
+                let mut inverses = Vec::with_capacity(commands.len());
+                for command in commands {
+                    match command.apply(project) {
+                        Ok(inverse) => inverses.push(inverse),
+                        Err(error) => {
+                            for inverse in inverses.into_iter().rev() {
+                                // Inverses of just-applied commands always match the current state.
+                                let _ = inverse.apply(project);
+                            }
+                            return Err(error);
+                        }
+                    }
+                }
+                inverses.reverse();
+                Ok(Self::Batch(inverses))
+            }
         }
-        let old_clips =
-            std::mem::replace(&mut project.tracks[track_index].clips, replacement.clone());
-        if let Err(error) = project.validate() {
-            project.tracks[track_index].clips = old_clips;
-            return Err(error);
-        }
-        Ok(Self::ReplaceTrackClips {
-            track_id,
-            expected: replacement,
-            replacement: old_clips,
-        })
     }
 }
 
@@ -633,6 +749,7 @@ pub fn split_clip_command(
         timeline_start_frame: split_frame,
         source_start_frame: right_source,
         duration_frames: clip.duration_frames - left_duration,
+        link_group: clip.link_group,
     };
     replacement[index].duration_frames = left_duration;
     replacement.insert(index + 1, right);
@@ -793,6 +910,8 @@ pub enum CoreError {
     MissingClip(u64),
     #[error("edit conflicts with the current project state on track {0}")]
     StaleCommand(u64),
+    #[error("edit conflicts with the current project state")]
+    StaleProject,
     #[error("invalid edit: {0}")]
     InvalidEdit(&'static str),
 }
@@ -825,6 +944,7 @@ mod tests {
                     timeline_start_frame: 0,
                     source_start_frame: 0,
                     duration_frames: 100,
+                    link_group: None,
                 }],
             }],
             ..Project::default()
@@ -883,6 +1003,7 @@ mod tests {
             timeline_start_frame: 120,
             source_start_frame: 0,
             duration_frames: 20,
+            link_group: None,
         });
         let command = ripple_delete_command(&project, 2, 30, 50).expect("range is valid");
         command.apply(&mut project).expect("edit applies");
@@ -911,9 +1032,9 @@ mod tests {
 
     #[test]
     fn invalid_edit_is_rejected_without_mutation() {
-        let mut project = project_with_clip();
+        let project = project_with_clip();
         let original = project.clone();
-        let mut history = CommandHistory::default();
+        let history = CommandHistory::default();
         let command = split_clip_command(&project, 2, 3, 0, 4).expect_err("edge split is invalid");
         assert_eq!(
             command,
@@ -922,5 +1043,225 @@ mod tests {
         assert_eq!(project, original);
         assert!(!history.can_undo());
         assert!(!history.can_redo());
+    }
+
+    fn editor_project() -> Project {
+        Project {
+            media: vec![
+                MediaAsset {
+                    id: 1,
+                    path: "/media/a.mp4".into(),
+                    content_hash: None,
+                    duration_frames: 300,
+                    width: 1280,
+                    height: 720,
+                    has_video: true,
+                    has_audio: true,
+                    rotation_degrees: 0,
+                },
+                MediaAsset {
+                    id: 2,
+                    path: "/media/b.wav".into(),
+                    content_hash: None,
+                    duration_frames: 90,
+                    width: 1280,
+                    height: 720,
+                    has_video: false,
+                    has_audio: true,
+                    rotation_degrees: 0,
+                },
+            ],
+            tracks: vec![
+                Track {
+                    id: 10,
+                    name: "V1".into(),
+                    kind: TrackKind::Video,
+                    clips: Vec::new(),
+                },
+                Track {
+                    id: 11,
+                    name: "A1".into(),
+                    kind: TrackKind::Audio,
+                    clips: Vec::new(),
+                },
+            ],
+            ..Project::default()
+        }
+    }
+
+    #[test]
+    fn adding_av_media_creates_linked_clips_and_split_keeps_them_linked() {
+        let mut project = editor_project();
+        let mut history = CommandHistory::default();
+        let (command, created) = add_media_clips_command(&project, 1).expect("add works");
+        history.execute(&mut project, command).expect("applies");
+        assert_eq!(created.len(), 2);
+        let split = split_at_command(&project, &[created[0]], 100).expect("split builds");
+        history.execute(&mut project, split).expect("split applies");
+        assert_eq!(project.tracks[0].clips.len(), 2);
+        assert_eq!(project.tracks[1].clips.len(), 2);
+        let right_video = &project.tracks[0].clips[1];
+        let right_audio = &project.tracks[1].clips[1];
+        assert_eq!(right_video.link_group, right_audio.link_group);
+        assert_ne!(
+            right_video.link_group,
+            project.tracks[0].clips[0].link_group
+        );
+        assert_eq!(right_video.source_start_frame, 100);
+    }
+
+    #[test]
+    fn ripple_delete_of_linked_clip_closes_gaps_on_both_tracks() {
+        let mut project = editor_project();
+        let (command, created) = add_media_clips_command(&project, 1).expect("add works");
+        command.apply(&mut project).expect("applies");
+        split_at_command(&project, &[created[0]], 100)
+            .and_then(|command| command.apply(&mut project))
+            .expect("split");
+        let first = project.tracks[0].clips[0].id;
+        delete_clips_command(&project, &[first], true)
+            .and_then(|command| command.apply(&mut project))
+            .expect("delete");
+        assert_eq!(project.tracks[0].clips.len(), 1);
+        assert_eq!(project.tracks[1].clips.len(), 1);
+        assert_eq!(project.tracks[0].clips[0].timeline_start_frame, 0);
+        assert_eq!(project.tracks[0].clips[0].source_start_frame, 100);
+        assert_eq!(project.tracks[1].clips[0].timeline_start_frame, 0);
+    }
+
+    #[test]
+    fn trim_limits_respect_media_bounds_and_neighbors() {
+        let mut project = editor_project();
+        let (command, created) = add_media_clips_command(&project, 1).expect("add works");
+        command.apply(&mut project).expect("applies");
+        let clip = created[0];
+        assert_eq!(trim_limits(&project, clip, TrimEdge::Tail), Ok((-299, 0)));
+        assert_eq!(trim_limits(&project, clip, TrimEdge::Head), Ok((0, 299)));
+        trim_command(&project, clip, TrimEdge::Head, 30)
+            .and_then(|command| command.apply(&mut project))
+            .expect("head trim");
+        assert_eq!(project.tracks[0].clips[0].timeline_start_frame, 30);
+        assert_eq!(project.tracks[1].clips[0].source_start_frame, 30);
+        assert!(trim_command(&project, clip, TrimEdge::Tail, 1).is_err());
+        move_command(&project, clip, -30)
+            .and_then(|command| command.apply(&mut project))
+            .expect("move");
+        assert_eq!(project.tracks[1].clips[0].timeline_start_frame, 0);
+    }
+
+    #[test]
+    fn overlapping_clips_are_rejected_by_validation() {
+        let mut project = project_with_clip();
+        project.tracks[0].clips.push(Clip {
+            id: 9,
+            media_id: 1,
+            timeline_start_frame: 50,
+            source_start_frame: 0,
+            duration_frames: 10,
+            link_group: None,
+        });
+        assert!(project.validate().is_err());
+    }
+
+    #[test]
+    fn video_plan_fills_gaps_and_merges_contiguous_ranges() {
+        let mut project = editor_project();
+        let (command, created) = add_media_clips_command(&project, 1).expect("add works");
+        command.apply(&mut project).expect("applies");
+        move_command(&project, created[0], 10)
+            .and_then(|command| command.apply(&mut project))
+            .expect("move");
+        let plan = video_plan(&project, 0, project.duration_frames() + 5);
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[0].source, None);
+        assert_eq!(plan[0].duration_frames, 10);
+        assert_eq!(plan[1].duration_frames, 300);
+        assert_eq!(plan[2].source, None);
+        let partial = video_plan(&project, 50, 60);
+        assert_eq!(partial.len(), 1);
+        assert_eq!(
+            partial[0].source.map(|source| source.source_start_frame),
+            Some(40)
+        );
+        assert_eq!(audio_plans(&project, 0, 310).len(), 1);
+    }
+
+    #[derive(Debug, Clone)]
+    enum Op {
+        Add(u64),
+        Split(usize, u64),
+        Delete(usize, bool),
+        Trim(usize, bool, i64),
+        Move(usize, i64),
+    }
+
+    fn op_strategy() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            (1_u64..=2).prop_map(Op::Add),
+            (0_usize..8, 0_u64..700).prop_map(|(index, frame)| Op::Split(index, frame)),
+            (0_usize..8, any::<bool>()).prop_map(|(index, ripple)| Op::Delete(index, ripple)),
+            (0_usize..8, any::<bool>(), -200_i64..200)
+                .prop_map(|(index, head, delta)| Op::Trim(index, head, delta)),
+            (0_usize..8, -200_i64..200).prop_map(|(index, delta)| Op::Move(index, delta)),
+        ]
+    }
+
+    fn pick_clip(project: &Project, index: usize) -> Option<u64> {
+        let all: Vec<u64> = project
+            .tracks
+            .iter()
+            .flat_map(|track| track.clips.iter().map(|clip| clip.id))
+            .collect();
+        (!all.is_empty()).then(|| all[index % all.len()])
+    }
+
+    fn build(project: &Project, op: &Op) -> Option<EditCommand> {
+        match *op {
+            Op::Add(media) => add_media_clips_command(project, media)
+                .ok()
+                .map(|(command, _)| command),
+            Op::Split(index, frame) => {
+                split_at_command(project, &[pick_clip(project, index)?], frame).ok()
+            }
+            Op::Delete(index, ripple) => {
+                delete_clips_command(project, &[pick_clip(project, index)?], ripple).ok()
+            }
+            Op::Trim(index, head, delta) => {
+                let clip = pick_clip(project, index)?;
+                let edge = if head { TrimEdge::Head } else { TrimEdge::Tail };
+                let (low, high) = trim_limits(project, clip, edge).ok()?;
+                trim_command(project, clip, edge, delta.clamp(low, high)).ok()
+            }
+            Op::Move(index, delta) => {
+                let clip = pick_clip(project, index)?;
+                let (low, high) = move_limits(project, clip).ok()?;
+                move_command(project, clip, delta.clamp(low, high)).ok()
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn random_edit_sequences_undo_and_redo_exactly(ops in proptest::collection::vec(op_strategy(), 1..25)) {
+            let mut project = editor_project();
+            let original = project.clone();
+            let mut history = CommandHistory::default();
+            let mut snapshots = vec![project.clone()];
+            for op in &ops {
+                if let Some(command) = build(&project, op) {
+                    history.execute(&mut project, command).map_err(|error| TestCaseError::fail(error.to_string()))?;
+                    prop_assert!(project.validate().is_ok());
+                    snapshots.push(project.clone());
+                }
+            }
+            let final_state = project.clone();
+            for expected in snapshots.iter().rev().skip(1) {
+                prop_assert!(history.undo(&mut project).map_err(|error| TestCaseError::fail(error.to_string()))?);
+                prop_assert_eq!(&project, expected);
+            }
+            prop_assert_eq!(&project, &original);
+            while history.redo(&mut project).map_err(|error| TestCaseError::fail(error.to_string()))? {}
+            prop_assert_eq!(&project, &final_state);
+        }
     }
 }

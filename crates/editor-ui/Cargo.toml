@@ -18,3 +18,4 @@ editor-project = { path = "../editor-project" }
 editor-render = { path = "../editor-render" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+cpal = "0.18.2"
