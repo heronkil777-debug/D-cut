@@ -112,6 +112,39 @@ struct ProbeDone {
     result: Result<MediaInfo, String>,
 }
 
+/// Debug automation (`D_CUT_AUTOTEST=play:SECONDS,quit:SECONDS`): starts playback and/or closes
+/// the window after the given number of seconds, so playback statistics and the clean-exit path
+/// can be measured without synthesizing input events. Never enabled unless the variable is set.
+struct Autotest {
+    started: Instant,
+    play_at: Option<f64>,
+    quit_at: Option<f64>,
+    played: bool,
+}
+
+impl Autotest {
+    fn from_env() -> Option<Self> {
+        let value = std::env::var("D_CUT_AUTOTEST").ok()?;
+        let mut test = Self {
+            started: Instant::now(),
+            play_at: None,
+            quit_at: None,
+            played: false,
+        };
+        for part in value.split(',') {
+            let (key, seconds) = part.split_once(':')?;
+            let seconds: f64 = seconds.trim().parse().ok()?;
+            match key.trim() {
+                "play" => test.play_at = Some(seconds),
+                "quit" => test.quit_at = Some(seconds),
+                _ => return None,
+            }
+        }
+        tracing::info!(play = ?test.play_at, quit = ?test.quit_at, "autotest enabled");
+        Some(test)
+    }
+}
+
 #[derive(Default)]
 struct Hud {
     visible: bool,
@@ -293,6 +326,7 @@ struct DcutApp {
     hud: Hud,
     title: String,
     last_dir: PathBuf,
+    autotest: Option<Autotest>,
 }
 
 impl DcutApp {
@@ -351,7 +385,9 @@ impl DcutApp {
             hud: Hud::default(),
             title: String::new(),
             last_dir: files::home_dir(),
+            autotest: Autotest::from_env(),
         };
+        app.hud.visible = std::env::var_os("D_CUT_HUD").is_some();
         for path in startup_files {
             if path
                 .extension()
@@ -1075,14 +1111,18 @@ impl DcutApp {
                                             let scale = 34.0 / size.y.max(1.0);
                                             ui.image((texture.id(), size * scale.min(1.0)));
                                         } else {
-                                            ui.label(if asset.has_video { "🎞" } else { "🎵" });
+                                            ui.small(if asset.has_video {
+                                                "[vídeo]"
+                                            } else {
+                                                "[áudio]"
+                                            });
                                         }
                                         ui.vertical(|ui| {
                                             let name = file_label(&asset.path);
                                             if self.missing_media.contains(&asset.id) {
                                                 ui.colored_label(
                                                     egui::Color32::LIGHT_RED,
-                                                    format!("⚠ {name}"),
+                                                    format!("! {name}"),
                                                 );
                                             } else {
                                                 ui.label(egui::RichText::new(name).strong());
@@ -1219,7 +1259,7 @@ impl DcutApp {
         });
         let linked = linked_clip_ids(&self.project, clip_id).len() > 1;
         if linked {
-            ui.small("🔗 Vídeo e áudio vinculados");
+            ui.small("Vídeo e áudio vinculados");
         }
         ui.horizontal_wrapped(|ui| {
             if ui.button(strings::SPLIT).on_hover_text("S").clicked() {
@@ -1378,34 +1418,32 @@ impl DcutApp {
                         let fps = self.fps();
                         let duration = self.project.duration_frames();
                         ui.add_space((ui.available_width() / 2.0 - 150.0).max(0.0));
-                        if ui.button("⏮").on_hover_text("Início (Home)").clicked() {
+                        if ui.button("Início").on_hover_text("Home").clicked() {
                             self.seek(0);
                         }
                         if ui
-                            .button("◀|")
-                            .on_hover_text("Frame anterior (←)")
+                            .button("< Frame")
+                            .on_hover_text("Seta esquerda")
                             .clicked()
                         {
                             self.seek(self.playhead.saturating_sub(1));
                         }
                         let play_label = if self.playback.is_some() {
-                            "⏸"
+                            "Pausar"
                         } else {
-                            "▶"
+                            "Play"
                         };
                         if ui
-                            .add(egui::Button::new(
-                                egui::RichText::new(play_label).size(16.0),
-                            ))
+                            .add(egui::Button::new(egui::RichText::new(play_label).strong()))
                             .on_hover_text("Play/Pause (Espaço)")
                             .clicked()
                         {
                             self.toggle_playback(ui.ctx());
                         }
-                        if ui.button("|▶").on_hover_text("Próximo frame (→)").clicked() {
+                        if ui.button("Frame >").on_hover_text("Seta direita").clicked() {
                             self.seek(self.playhead + 1);
                         }
-                        if ui.button("⏭").on_hover_text("Fim (End)").clicked() {
+                        if ui.button("Fim").on_hover_text("End").clicked() {
                             self.seek(duration);
                         }
                         ui.monospace(format!(
@@ -1488,9 +1526,9 @@ impl DcutApp {
                 ui.horizontal(|ui| {
                     if ui
                         .button(if self.playback.is_some() {
-                            "⏸"
+                            "Pausar"
                         } else {
-                            "▶"
+                            "Play"
                         })
                         .clicked()
                     {
@@ -1522,14 +1560,14 @@ impl DcutApp {
                     }
                     ui.separator();
                     if ui
-                        .button("−")
+                        .button(" - ")
                         .on_hover_text("Diminuir zoom (Ctrl+roda / -)")
                         .clicked()
                     {
                         self.pixels_per_second = (self.pixels_per_second / 1.25).max(2.0);
                     }
                     if ui
-                        .button("＋")
+                        .button(" + ")
                         .on_hover_text("Aumentar zoom (Ctrl+roda / +)")
                         .clicked()
                     {
@@ -1683,15 +1721,10 @@ impl DcutApp {
                 egui::vec2(HEADER_WIDTH - 4.0, lane_height),
             );
             painter.rect_filled(header, egui::CornerRadius::same(3), PANEL);
-            let icon = match track.kind {
-                TrackKind::Video => "🎞",
-                TrackKind::Audio => "🔊",
-                TrackKind::Subtitle => "💬",
-            };
             painter.text(
                 header.left_center() + egui::vec2(6.0, 0.0),
                 egui::Align2::LEFT_CENTER,
-                format!("{icon} {}", track.name),
+                track.name.clone(),
                 egui::FontId::proportional(12.0),
                 egui::Color32::LIGHT_GRAY,
             );
@@ -1796,7 +1829,7 @@ impl DcutApp {
                     .media_asset(clip.media_id)
                     .map_or_else(String::new, |media| file_label(&media.path));
                 let link = if clip.link_group.is_some() {
-                    "🔗 "
+                    "[V+A] "
                 } else {
                     ""
                 };
@@ -2108,7 +2141,7 @@ impl DcutApp {
                         }
                     }
                     Some(JobState::Done { summary }) => {
-                        ui.colored_label(TEAL, "✔ Exportado e conferido com ffprobe:");
+                        ui.colored_label(TEAL, "Exportado e conferido com ffprobe:");
                         ui.label(summary);
                         if let Some(job) = &self.export_job {
                             ui.small(format!(
@@ -2273,6 +2306,7 @@ impl DcutApp {
                     pressed(egui::Key::Minus),
                     pressed(egui::Key::F3),
                     pressed(egui::Key::N),
+                    pressed(egui::Key::Q),
                 ],
             )
         });
@@ -2295,7 +2329,11 @@ impl DcutApp {
             minus,
             f3,
             n,
+            q,
         ] = keys;
+        if ctrl && q {
+            self.request_action(PendingAction::Close);
+        }
         if space {
             self.toggle_playback(ctx);
         }
@@ -2357,6 +2395,32 @@ impl DcutApp {
         }
     }
 
+    fn run_autotest(&mut self, ctx: &egui::Context) {
+        let Some(test) = &mut self.autotest else {
+            return;
+        };
+        let elapsed = test.started.elapsed().as_secs_f64();
+        let play = test.play_at.is_some_and(|at| elapsed >= at)
+            && !test.played
+            && self.pending_probes.is_empty()
+            && self.project.duration_frames() > 0;
+        let quit = test.quit_at.is_some_and(|at| elapsed >= at);
+        if play {
+            test.played = true;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        if play && self.playback.is_none() {
+            self.toggle_playback(ctx);
+        }
+        if quit {
+            self.autotest = None;
+            self.stop_playback();
+            self.dirty = false;
+            self.pending_action = None;
+            self.allow_close = true;
+        }
+    }
+
     fn update_title(&mut self, ctx: &egui::Context) {
         let name = self
             .project_path
@@ -2406,6 +2470,7 @@ impl eframe::App for DcutApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
+        self.run_autotest(&ctx);
         self.receive_probes();
         self.assets.poll(&ctx);
         self.receive_dropped_files(&ctx);

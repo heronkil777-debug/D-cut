@@ -187,12 +187,12 @@ impl FileDialog {
             .show(ctx, |ui| {
                 let mut navigate = None;
                 ui.horizontal(|ui| {
-                    if ui.button("⬆").on_hover_text("Pasta acima").clicked()
+                    if ui.button("Acima").on_hover_text("Pasta acima").clicked()
                         && let Some(parent) = self.directory.parent()
                     {
                         navigate = Some(parent.to_owned());
                     }
-                    if ui.button("🏠").on_hover_text("Pasta pessoal").clicked() {
+                    if ui.button("Início").on_hover_text("Pasta pessoal").clicked() {
                         navigate = Some(home_dir());
                     }
                     for (label, sub) in [("Vídeos", "Videos"), ("Downloads", "Downloads")] {
@@ -239,9 +239,9 @@ impl FileDialog {
                         }
                         for entry in &self.entries {
                             let label = if entry.is_dir {
-                                format!("📁 {}", entry.name)
+                                format!("[pasta] {}", entry.name)
                             } else {
-                                format!("🎞 {}", entry.name)
+                                entry.name.clone()
                             };
                             let selected = self.selected.contains(&entry.path);
                             let response = ui.selectable_label(selected, label);
