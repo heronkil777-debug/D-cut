@@ -327,6 +327,9 @@ struct DcutApp {
     title: String,
     last_dir: PathBuf,
     autotest: Option<Autotest>,
+    show_library: bool,
+    show_inspector: bool,
+    layout_frames: u32,
 }
 
 impl DcutApp {
@@ -386,6 +389,9 @@ impl DcutApp {
             title: String::new(),
             last_dir: files::home_dir(),
             autotest: Autotest::from_env(),
+            show_library: true,
+            show_inspector: true,
+            layout_frames: 0,
         };
         app.hud.visible = std::env::var_os("D_CUT_HUD").is_some();
         for path in startup_files {
@@ -990,7 +996,7 @@ impl DcutApp {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("main-toolbar").show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.strong(egui::RichText::new(PRODUCT_NAME).color(TEAL));
                 ui.separator();
                 if ui.button(strings::NEW_PROJECT).clicked() {
@@ -1024,6 +1030,9 @@ impl DcutApp {
                 {
                     self.redo();
                 }
+                ui.separator();
+                ui.toggle_value(&mut self.show_library, "Mídia");
+                ui.toggle_value(&mut self.show_inspector, "Propriedades");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.weak(format!("v{}", env!("CARGO_PKG_VERSION")));
                     let export_button = egui::Button::new(
@@ -1518,10 +1527,12 @@ impl DcutApp {
     }
 
     fn timeline_panel(&mut self, ui: &mut egui::Ui) {
+        let screen_height = ui.ctx().content_rect().height();
         egui::Panel::bottom("timeline")
             .resizable(true)
-            .default_size(250.0)
-            .min_size(160.0)
+            .default_size((screen_height * 0.36).clamp(170.0, 300.0))
+            .min_size(150.0)
+            .max_size((screen_height * 0.6).max(160.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui
@@ -1581,7 +1592,10 @@ impl DcutApp {
                         self.fit_timeline(ui.available_width());
                     }
                 });
-                let status_height = 18.0;
+                // Reserve the full status row (text + spacing) so the panel never grows by itself.
+                let status_height = ui.text_style_height(&egui::TextStyle::Small)
+                    + ui.spacing().item_spacing.y * 2.0
+                    + 2.0;
                 let area_size = egui::vec2(
                     ui.available_width(),
                     (ui.available_height() - status_height).max(60.0),
@@ -2475,10 +2489,23 @@ impl eframe::App for DcutApp {
         self.assets.poll(&ctx);
         self.receive_dropped_files(&ctx);
         self.shortcuts(&ctx);
+        if self.layout_frames < 30 {
+            // Narrow (tiled) windows start with side panels hidden. Applied during the first
+            // frames because tiling compositors resize the window after it is mapped.
+            let width = ctx.content_rect().width();
+            self.show_inspector = width >= 1100.0;
+            self.show_library = width >= 760.0;
+            self.layout_frames += 1;
+            ctx.request_repaint();
+        }
         self.toolbar(ui);
         self.timeline_panel(ui);
-        self.media_panel(ui);
-        self.inspector_panel(ui);
+        if self.show_library {
+            self.media_panel(ui);
+        }
+        if self.show_inspector {
+            self.inspector_panel(ui);
+        }
         self.update_preview(&ctx);
         self.preview_panel(ui);
         self.handle_dialog(&ctx);

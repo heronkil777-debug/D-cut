@@ -36,3 +36,9 @@
 - From Phase 1 onward, produce the AppImage and report its status. Do not claim CI is green unless checked.
 - End every phase with the briefing's ordered acceptance report and a local `phase-N` tag; stop for the user's `ok`.
 - AppImage builds target an old glibc container and must not bundle host Vulkan/Mesa/VAAPI/audio/display drivers. Follow the FUSE fallback and license/notice requirements in the briefing.
+
+## Commands (verified 2026-11-11)
+- `cargo test --workspace` runs real FFmpeg integration tests (`crates/editor-media/tests/`); they skip if ffmpeg is absent.
+- `scripts/build-appimage.sh` (container) or `scripts/build-appimage.sh --host` (no container, host glibc).
+- GUI debug: `D_CUT_HUD=1` (HUD on), `D_CUT_AUTOTEST=play:3,quit:20` (auto play/close for measurements; logs in `~/.local/state/d-cut/logs/d-cut.log`).
+- `D_CUT_FFMPEG` / `D_CUT_FFPROBE` override the FFmpeg binaries.

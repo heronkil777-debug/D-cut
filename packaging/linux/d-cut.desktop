@@ -1,9 +1,15 @@
 [Desktop Entry]
 Type=Application
 Name=D-cut
+GenericName=Video Editor
+GenericName[pt_BR]=Editor de vídeo
 Comment=Local-first open-source video editor
-Exec=AppRun %F
+Comment[pt_BR]=Editor de vídeo local e de código aberto
+Exec=d-cut %F
 Icon=d-cut
 Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=video/mp4;video/quicktime;video/x-matroska;video/webm;
+Keywords=video;editor;cut;timeline;
 Terminal=false
 StartupNotify=true
+StartupWMClass=d-cut

@@ -1,5 +1,19 @@
 #!/usr/bin/env sh
+# D-cut AppImage entry point.
+#   ./D-cut-x86_64.AppImage [files...]        start the editor
+#   ./D-cut-x86_64.AppImage --cli <args...>    run the headless d-cut-cli
+# FFmpeg: a bundled usr/bin/ffmpeg is used when present; otherwise the system ffmpeg/ffprobe.
 set -eu
 HERE="$(dirname "$(readlink -f "$0")")"
 export PATH="${HERE}/usr/bin:${PATH}"
+if [ -x "${HERE}/usr/bin/ffmpeg" ]; then
+    export D_CUT_FFMPEG="${HERE}/usr/bin/ffmpeg"
+fi
+if [ -x "${HERE}/usr/bin/ffprobe" ]; then
+    export D_CUT_FFPROBE="${HERE}/usr/bin/ffprobe"
+fi
+if [ "${1:-}" = "--cli" ]; then
+    shift
+    exec "${HERE}/usr/bin/d-cut-cli" "$@"
+fi
 exec "${HERE}/usr/bin/d-cut" "$@"

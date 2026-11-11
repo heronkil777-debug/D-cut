@@ -1,68 +1,63 @@
 #!/usr/bin/env bash
+# Builds build/appimage/D-cut-x86_64.AppImage.
+#
+# Default: build inside an Ubuntu 22.04 container (Podman or Docker) so the binary only needs
+# glibc >= 2.35 and runs on most distributions.
+# --host:  build directly on this machine (no container). The AppImage then needs a glibc at
+#          least as new as the build machine's (fine for an up-to-date Arch, not portable).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mode="container"
+if [ "${1:-}" = "--host" ]; then
+    mode="host"
+fi
 if [ ! -f "${repo_root}/Cargo.lock" ]; then
-    printf '%s\n' 'Error: Cargo.lock is missing; resolve dependencies and commit the lockfile before packaging.' >&2
+    printf '%s\n' 'Error: Cargo.lock is missing.' >&2
     exit 1
 fi
 
-image_name="d-cut-appimage-builder:ubuntu-22.04"
 output_dir="${repo_root}/build/appimage"
 appimage_path="${output_dir}/D-cut-x86_64.AppImage"
+mkdir -p "${output_dir}"
 
-if command -v podman >/dev/null 2>&1; then
-    container_engine=(podman)
-elif command -v docker >/dev/null 2>&1; then
-    container_engine=(docker)
+if [ "${mode}" = "container" ]; then
+    container_engine=""
+    if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+        container_engine="podman"
+    elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        container_engine="docker"
+    fi
+    if [ -z "${container_engine}" ]; then
+        cat >&2 <<'MSG'
+Error: no usable container engine (Podman, or Docker with access to its socket).
+  - Podman (rootless, recommended on Arch): sudo pacman -S podman
+  - or Docker: sudo usermod -aG docker "$USER" and log in again
+  - or build without a container (glibc of this machine): scripts/build-appimage.sh --host
+MSG
+        exit 1
+    fi
+    image_name="d-cut-appimage-builder:ubuntu-22.04"
+    "${container_engine}" build \
+        --file "${repo_root}/scripts/appimage/Dockerfile" \
+        --tag "${image_name}" \
+        "${repo_root}"
+    "${container_engine}" run --rm \
+        --user "$(id -u):$(id -g)" \
+        --env HOME=/tmp \
+        --env CARGO_HOME=/workspace/build/cargo-home \
+        --env CARGO_TARGET_DIR=/workspace/build/target-container \
+        --volume "${repo_root}:/workspace" \
+        --workdir /workspace \
+        "${image_name}" \
+        bash -euo pipefail -c '
+            mkdir -p /workspace/build/cargo-home
+            scripts/appimage/assemble.sh /workspace /workspace/build/tools
+        '
 else
-    printf '%s\n' 'Error: Podman or Docker is required to build the AppImage.' >&2
-    exit 1
+    printf '%s\n' 'Warning: host build; the AppImage requires a glibc at least as new as this machine.' >&2
+    "${repo_root}/scripts/appimage/assemble.sh" "${repo_root}" "${repo_root}/build/tools"
 fi
 
-mkdir -p "${output_dir}"
-"${container_engine[@]}" build \
-    --file "${repo_root}/scripts/appimage/Dockerfile" \
-    --tag "${image_name}" \
-    "${repo_root}"
-
-"${container_engine[@]}" run --rm \
-    --user "$(id -u):$(id -g)" \
-    --env HOME=/tmp \
-    --env CARGO_HOME=/workspace/build/cargo-home \
-    --env APPIMAGE_EXTRACT_AND_RUN=1 \
-    --volume "${repo_root}:/workspace" \
-    --workdir /workspace \
-    "${image_name}" \
-    bash -euo pipefail -c '
-        mkdir -p /workspace/build/cargo-home
-        cargo build --locked --release --workspace
-        app_dir="/workspace/build/appimage/D-cut.AppDir"
-        rm -rf "${app_dir}"
-        mkdir -p "${app_dir}/usr/bin" \
-                 "${app_dir}/usr/share/applications" \
-                 "${app_dir}/usr/share/metainfo" \
-                 "${app_dir}/usr/share/doc/d-cut" \
-                 "${app_dir}/usr/share/licenses/d-cut" \
-                 "${app_dir}/usr/share/icons/hicolor/1024x1024/apps"
-        install -m 0755 target/release/d-cut "${app_dir}/usr/bin/d-cut"
-        install -m 0755 target/release/d-cut-cli "${app_dir}/usr/bin/d-cut-cli"
-        install -m 0644 packaging/linux/d-cut.desktop "${app_dir}/d-cut.desktop"
-        install -m 0644 packaging/linux/d-cut.desktop "${app_dir}/usr/share/applications/d-cut.desktop"
-        install -m 0644 packaging/linux/d-cut.metainfo.xml "${app_dir}/usr/share/metainfo/d-cut.metainfo.xml"
-        install -m 0644 THIRD_PARTY_LICENSES "${app_dir}/usr/share/doc/d-cut/THIRD_PARTY_LICENSES"
-        install -m 0644 LICENSE "${app_dir}/usr/share/licenses/d-cut/LICENSE"
-        install -m 0644 assets/branding/d-cut-icon.png "${app_dir}/usr/share/icons/hicolor/1024x1024/apps/d-cut.png"
-        install -m 0644 assets/branding/d-cut-icon.png "${app_dir}/d-cut.png"
-        ln -sfn d-cut.png "${app_dir}/.DirIcon"
-        install -m 0755 packaging/linux/AppRun "${app_dir}/AppRun"
-        curl --fail --location --retry 3 \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
-            --output /tmp/appimagetool.AppImage
-        chmod +x /tmp/appimagetool.AppImage
-        APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool.AppImage \
-            "${app_dir}" /workspace/build/appimage/D-cut-x86_64.AppImage
-    '
-
-sha256sum "${appimage_path}" > "${appimage_path}.sha256"
+(cd "${output_dir}" && sha256sum "$(basename "${appimage_path}")" > "$(basename "${appimage_path}").sha256")
 printf 'AppImage output: %s\n' "${appimage_path}"
