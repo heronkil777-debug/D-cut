@@ -15,7 +15,7 @@ use editor_core::{
 };
 use editor_media::{
     probe,
-    timeline::{ExportEncoder, TimelineRender, export_timeline, render_frame},
+    timeline::{ExportEncoder, TimelineRender, export_timeline, render_frame, spawn_video_stream},
 };
 
 fn have_ffmpeg() -> bool {
@@ -393,6 +393,16 @@ fn rotated_phone_clip_and_vfr_clip_render_with_correct_geometry_and_length() {
         column_brightness(2) > 480 * 20,
         "left edge looks letterboxed"
     );
+
+    // Regression (FFmpeg 7.1): the raw RGBA stream must yield exactly one frame per
+    // timeline frame across rotated and VFR segments.
+    let job = TimelineRender::from_project(&project, 0, total, 270, 480).expect("job");
+    let mut stream = spawn_video_stream(&job).expect("stream");
+    let mut streamed = 0_u64;
+    while stream.next_frame().expect("frame").is_some() {
+        streamed += 1;
+    }
+    assert_eq!(streamed, total, "raw stream frame count");
 
     let job = TimelineRender::from_project(&project, 0, total, 540, 960).expect("job");
     let output = dir.join("vertical.mp4");

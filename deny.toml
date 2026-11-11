@@ -1,7 +1,12 @@
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+    # ttf-parser (via cosmic-text -> fontdb) is unmaintained with no successor release yet.
+    # D-cut only parses its own embedded Noto Sans font, never untrusted font files.
+    # Re-evaluate when cosmic-text/fontdb move off ttf-parser. See docs/DECISIONS.md.
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained; only the bundled font is parsed" },
+]
 
 [bans]
 multiple-versions = "warn"

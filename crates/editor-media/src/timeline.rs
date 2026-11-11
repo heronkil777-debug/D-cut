@@ -302,12 +302,22 @@ fn drain_stderr(child: &mut Child) -> Option<thread::JoinHandle<String>> {
 pub struct VideoStream {
     child: Child,
     stdout: std::process::ChildStdout,
+    stderr: Option<thread::JoinHandle<String>>,
     pub width: u32,
     pub height: u32,
     frame_bytes: usize,
 }
 
 impl VideoStream {
+    /// Waits for FFmpeg to exit and returns the tail of its stderr (for error reports).
+    pub fn stderr_tail(&mut self) -> String {
+        let _ = self.child.wait();
+        self.stderr
+            .take()
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default()
+    }
+
     /// Reads the next frame; `Ok(None)` at the end of the stream.
     pub fn next_frame(&mut self) -> Result<Option<Vec<u8>>, MediaError> {
         let mut frame = vec![0_u8; self.frame_bytes];
@@ -350,12 +360,23 @@ pub fn spawn_video_stream(job: &TimelineRender) -> Result<VideoStream, MediaErro
         .arg("-filter_complex")
         .arg(graph.script())
         .args([
-            "-map", "[vout]", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
+            // The graph already emits exactly one frame per timeline frame; never let the
+            // muxer drop/duplicate by timestamp (FFmpeg 7.1 dropped frames here by default).
+            "-map",
+            "[vout]",
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "pipe:1",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     let mut child = command.spawn().map_err(spawn_error)?;
+    let stderr = drain_stderr(&mut child);
     let stdout = child
         .stdout
         .take()
@@ -364,6 +385,7 @@ pub fn spawn_video_stream(job: &TimelineRender) -> Result<VideoStream, MediaErro
     Ok(VideoStream {
         child,
         stdout,
+        stderr,
         width: job.width,
         height: job.height,
         frame_bytes,

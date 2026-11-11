@@ -79,3 +79,21 @@ Registros em ordem cronológica. Datas em UTC.
 
 ## 2026-11-11 — Métrica de deriva A/V
 - **Decisão:** "drift" = |média do offset vídeo−relógio nos últimos ~10 s − média nos primeiros 10 s|. O offset por frame é limitado pela quantização de 1 frame e não mede deriva. O relógio de áudio é interpolado entre callbacks (máx. 50 ms). Medido: 3,4 ms em 63,8 s (1080p30, Vega 8).
+
+## 2026-11-11 — Fase 3: texto/legendas com wgpu + cosmic-text (escolha (a) do usuário)
+- **Decisão:** `editor-text` (cosmic-text 0.19, fonte embutida Noto Sans Bold, SIL OFL 1.1, em `assets/fonts/`) gera a camada de texto RGBA com contorno; `editor-render` compõe base + texto com `compose.wgsl`, o **mesmo shader** na prévia (callback egui no device do eframe) e no export (`OffscreenCompositor` num device headless ou no device da UI). `editor-export` (crate prevista no §6) orquestra: FFmpeg decodifica o grafo da timeline em RGBA → GPU compõe → FFmpeg codifica (stdin) com o áudio do mesmo grafo. Projetos sem texto continuam no caminho só-FFmpeg.
+- **Multi-faixa:** faixas de vídeo/áudio adicionáveis; a faixa de vídeo mais acima cobre as de baixo (prioridade, sem transparência/PiP ainda); áudio de todas as faixas é mixado. Faixa de texto T1.
+
+## 2026-11-11 — Comparação medida: composição FFmpeg-only × wgpu (não é decisão final)
+- **Cenário:** 1080p30, 20 s (testsrc2 + seno), x264 `veryfast`, notebook Ryzen 5 3500U / Vega 8 (RADV), FFmpeg 9.0.2 do host.
+- **Velocidade:** FFmpeg-only 79,8 fps (7,5 s); caminho wgpu forçado 32,5–37,7 fps (16–18 s). VAAPI: FFmpeg-only 96 fps, wgpu 36,5 fps. O gargalo do caminho wgpu é o tráfego RGBA (decode→upload→readback→stdin, ~8 MB/frame), não o shader.
+- **Qualidade:** PSNR entre as duas saídas = 43,2 dB (ruído de encoder; export vs fonte = 40,5 dB). Teste automático exige ≥ 38 dB com fonte colorida.
+- **Bug encontrado na comparação:** `scale=in_color_matrix=bt709`/`out_color_matrix=bt709` no FFmpeg 9 não fecha a ida/volta YUV→RGBA→YUV (25,8 dB). Correção: mesma matriz (BT.601) nos dois sentidos do RGBA intermediário (≈48 dB, valores YUV preservados, arquivo marcado BT.709). **Limitação:** a prévia converte com BT.601 (desvio leve de cor só na tela).
+- **Conclusão provisória:** a composição FFmpeg continua provisória para vídeo puro; o wgpu já é o caminho de texto. Antes de declarar qualquer um definitivo falta: medir na RX 6650 XT, levar a conversão YUV↔RGB para o shader (elimina o tráfego RGBA e o problema de matriz) e repetir esta tabela.
+
+## 2026-11-11 — FFmpeg 7.1.5 embutido no AppImage portátil
+- **Decisão:** FFmpeg 7.1.5 (tarball oficial, assinatura GPG verificada com a chave de release `FCF986EA15E6E293A5644F10B4322F04D67658D8`, SHA-256 `de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f`) compilado no container Ubuntu 22.04 com `--enable-gpl --disable-nonfree --disable-autodetect` + libx264, libx265, libsvtav1, VAAPI, libdrm, zlib. Bibliotecas de codec e libav* vão em `usr/lib` (rpath `$ORIGIN`); libva/libdrm/libz/glibc ficam do host (excludelist). Licenças e manifesto de build em `usr/share/licenses/ffmpeg/`.
+- **Rede do Podman:** rootless `pasta` falhou (`/dev/net/tun` ausente); o script usa `--network=host` no build e no run.
+
+## 2026-11-11 — Exceção cargo-deny: RUSTSEC-2026-0192 (ttf-parser unmaintained)
+- **Decisão:** ignorar no `deny.toml` o aviso "unmaintained" do `ttf-parser` (vem de cosmic-text → fontdb; não há versão alternativa). O D-cut só lê a fonte embutida (nunca fontes do usuário/sistema), então não há entrada não confiável. Reavaliar quando cosmic-text/fontdb trocarem de parser.

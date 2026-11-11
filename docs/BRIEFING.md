@@ -3,7 +3,7 @@
 > Fonte: briefing integral fornecido pelo usuário. Atualizado em 2026-11-11 com a escolha do caminho D e o alinhamento aprovado. A especificação abaixo é mantida integralmente; decisões novas que alterem o escopo devem atualizar este arquivo e `docs/DECISIONS.md` juntos.
 
 
-> **Divergências aprovadas (2026-11-11, ver docs/DECISIONS.md):** (1) a composição/prévia/export usa provisoriamente um grafo FFmpeg em vez do `editor-render`/wgpu; não é definitiva sem comparação medida contra wgpu. (2) O AppImage de teste pode sair sem FFmpeg; a entrega portátil final exige FFmpeg 7+ embutido com licenças documentadas.
+> **Divergências aprovadas (2026-11-11, ver docs/DECISIONS.md):** (1) a composição/prévia/export usa provisoriamente um grafo FFmpeg em vez do `editor-render`/wgpu; não é definitiva sem comparação medida contra wgpu. (2) O AppImage de teste pode sair sem FFmpeg; a entrega portátil final exige FFmpeg 7+ embutido com licenças documentadas. (3) Fase 3 implementada com wgpu + cosmic-text (texto composto pelo `editor-render`); comparação FFmpeg × wgpu registrada em DECISIONS, sem decisão definitiva.
 
 ## PROJETO: editor de vídeo open source estilo CapCut pro Arch Linux (AppImage)
 

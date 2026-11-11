@@ -33,8 +33,8 @@ pub enum ExportError {
     Render(#[from] RenderError),
     #[error("the timeline is empty")]
     Empty,
-    #[error("decoder ended early at frame {0}")]
-    ShortDecode(u64),
+    #[error("decoder ended early at frame {frame}: {stderr}")]
+    ShortDecode { frame: u64, stderr: String },
 }
 
 /// Which pipeline produced the file.
@@ -96,9 +96,12 @@ pub fn export_project(
             let _ = std::fs::remove_file(output);
             return Err(MediaError::Cancelled.into());
         }
-        let base = decoder
-            .next_frame()?
-            .ok_or(ExportError::ShortDecode(frame))?;
+        let Some(base) = decoder.next_frame()? else {
+            return Err(ExportError::ShortDecode {
+                frame,
+                stderr: decoder.stderr_tail(),
+            });
+        };
         let active: Vec<u64> = active_overlays(project, frame)
             .iter()
             .map(|overlay| overlay.id)
