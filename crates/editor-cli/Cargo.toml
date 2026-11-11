@@ -1,0 +1,16 @@
+[package]
+name = "editor-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "d-cut-cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+editor-core = { path = "../editor-core" }
+editor-media = { path = "../editor-media" }
+editor-project = { path = "../editor-project" }

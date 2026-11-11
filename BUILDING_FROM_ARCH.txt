@@ -1,0 +1,13 @@
+D-Cut source package for Arch Linux
+==================================
+
+Status: source snapshot; the latest UI workflow has not been compiled or tested. A previous Arch build caught egui DroppedFile path/ownership errors, which were fixed in this snapshot by converting path() to an owned PathBuf and cloning the path into the probe worker. The UI now has drag-and-drop metadata import, adding clips to V1/A1, selection, split at playhead, delete (gap retained), undo/redo, and JSON project open/save. Preview decoding and timeline export remain unimplemented; the Play control only advances the playhead. Earlier tests/AppImage successes belong to older code and do not validate this snapshot.
+
+Requirements: Rust stable via rustup, a C toolchain (base-devel), and FFmpeg/ffprobe for media workflows.
+
+From the extracted D-cut directory:
+  source "$HOME/.cargo/env"   # if installed with rustup and cargo is not on PATH
+  cargo run -p editor-ui -j 2
+  cargo test --workspace -j 2
+
+Do not treat this source ZIP as an AppImage. AppImage packaging remains unvalidated and is not included as a built binary.

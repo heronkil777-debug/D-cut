@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/editor-core",
+    "crates/editor-media",
+    "crates/editor-project",
+    "crates/editor-render",
+    "crates/editor-ui",
+    "crates/editor-cli",
+]
+default-members = [
+    "crates/editor-core",
+    "crates/editor-media",
+    "crates/editor-project",
+    "crates/editor-render",
+    "crates/editor-ui",
+    "crates/editor-cli",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "AGPL-3.0-or-later"
+rust-version = "1.95"
+
+[workspace.dependencies]
+anyhow = "1"
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "wayland", "wgpu", "x11"] }
+egui = "0.37.0"
+egui-wgpu = { version = "0.37.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }

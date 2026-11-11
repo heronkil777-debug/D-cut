@@ -1,0 +1,20 @@
+[package]
+name = "editor-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "d-cut"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+eframe.workspace = true
+editor-core = { path = "../editor-core" }
+editor-media = { path = "../editor-media" }
+editor-project = { path = "../editor-project" }
+editor-render = { path = "../editor-render" }
+tracing.workspace = true
+tracing-subscriber.workspace = true

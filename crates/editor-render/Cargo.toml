@@ -1,0 +1,10 @@
+[package]
+name = "editor-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+egui.workspace = true
+egui-wgpu.workspace = true

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=D-cut
+Comment=Local-first open-source video editor
+Exec=AppRun %F
+Icon=d-cut
+Categories=AudioVideo;Video;AudioVideoEditing;
+Terminal=false
+StartupNotify=true

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.heronkil777-debug.Dcut</id>
+  <name>D-cut</name>
+  <summary>Local-first open-source video editor</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <description>
+    <p>D-cut is a private, local-first video editor for Linux.</p>
+  </description>
+  <launchable type="desktop-id">d-cut.desktop</launchable>
+  <url type="homepage">https://github.com/heronkil777-debug/D-cut</url>
+  <provides>
+    <binary>d-cut</binary>
+  </provides>
+</component>

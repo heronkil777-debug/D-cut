@@ -1,0 +1,5 @@
+D-cut application source: AGPL-3.0-or-later.
+
+The workspace currently declares common third-party Rust dependencies including eframe/egui, serde, serde_json, thiserror, anyhow, tracing, and proptest. Exact resolved versions and complete transitive license notices have not been generated because Cargo.lock is not available yet. Do not distribute binaries until the lockfile is resolved and this notice is regenerated from the complete dependency graph.
+
+The planned AppImage must also include a custom FFmpeg 7+ build and its complete component notices (including enabled codecs). That FFmpeg build and its notices are not present yet.
