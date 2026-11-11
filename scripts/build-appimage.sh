@@ -37,9 +37,29 @@ Error: no usable container engine (Podman, or Docker with access to its socket).
 MSG
         exit 1
     fi
+    ffmpeg_version="7.1.5"
+    ffmpeg_dir="${repo_root}/build/ffmpeg"
+    tarball="${ffmpeg_dir}/ffmpeg-${ffmpeg_version}.tar.xz"
+    mkdir -p "${ffmpeg_dir}"
+    if [ ! -f "${tarball}" ] || [ ! -f "${tarball}.asc" ]; then
+        curl -sS --fail --location --retry 5 --retry-all-errors \
+            "https://ffmpeg.org/releases/ffmpeg-${ffmpeg_version}.tar.xz" -o "${tarball}"
+        curl -sS --fail --location --retry 5 --retry-all-errors \
+            "https://ffmpeg.org/releases/ffmpeg-${ffmpeg_version}.tar.xz.asc" -o "${tarball}.asc"
+    fi
+    if [ ! -f "${ffmpeg_dir}/ffmpeg-devel.asc" ]; then
+        curl -sS --fail --location --retry 5 --retry-all-errors \
+            https://ffmpeg.org/ffmpeg-devel.asc -o "${ffmpeg_dir}/ffmpeg-devel.asc"
+    fi
+    # Temporary keyring inside build/ (the user's ~/.gnupg is never touched).
+    export GNUPGHOME="${ffmpeg_dir}/gnupg"
+    mkdir -p -m 700 "${GNUPGHOME}"
+    gpg --quiet --import "${ffmpeg_dir}/ffmpeg-devel.asc" 2>/dev/null || true
+    gpg --quiet --verify "${tarball}.asc" "${tarball}"
     image_name="d-cut-appimage-builder:ubuntu-22.04"
-    "${container_engine}" build \
+    "${container_engine}" build --network=host \
         --file "${repo_root}/scripts/appimage/Dockerfile" \
+        --build-arg "FFMPEG_VERSION=${ffmpeg_version}" \
         --tag "${image_name}" \
         "${repo_root}"
     user_args=(--user "$(id -u):$(id -g)")
@@ -47,7 +67,7 @@ MSG
         # Rootless Podman: map the host user into the container so /workspace stays writable.
         user_args=(--userns=keep-id "${user_args[@]}")
     fi
-    "${container_engine}" run --rm \
+    "${container_engine}" run --rm --network=host \
         "${user_args[@]}" \
         --env HOME=/tmp \
         --env CARGO_HOME=/workspace/build/cargo-home \

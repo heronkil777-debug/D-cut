@@ -14,3 +14,4 @@ anyhow.workspace = true
 editor-core.workspace = true
 editor-media.workspace = true
 editor-project.workspace = true
+editor-export.workspace = true

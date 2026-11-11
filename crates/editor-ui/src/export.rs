@@ -12,10 +12,10 @@ use std::{
     time::Instant,
 };
 
-use editor_media::{
-    probe,
-    timeline::{ExportEncoder, TimelineRender, export_timeline},
-};
+use editor_core::Project;
+use editor_export::{ExportOptions, ExportPath, export_project};
+use editor_media::{probe, timeline::ExportEncoder};
+use editor_render::wgpu;
 use eframe::egui;
 
 pub const VAAPI_DEVICE: &str = "/dev/dri/renderD128";
@@ -43,8 +43,9 @@ pub struct ExportJob {
 impl ExportJob {
     pub fn start(
         ctx: egui::Context,
-        job: TimelineRender,
+        project: Project,
         encoder: ExportEncoder,
+        device: Option<(wgpu::Device, wgpu::Queue)>,
         output: PathBuf,
     ) -> Self {
         let state = Arc::new(Mutex::new(JobState::Running { fraction: 0.0 }));
@@ -58,18 +59,32 @@ impl ExportJob {
                 tracing::info!(output = %worker_output.display(), ?encoder, "export started");
                 let progress_state = Arc::clone(&worker_state);
                 let progress_ctx = ctx.clone();
-                let result =
-                    export_timeline(&job, &encoder, &worker_output, &worker_cancel, |progress| {
+                let options = ExportOptions {
+                    encoder,
+                    force_gpu: false,
+                    device,
+                };
+                let result = export_project(
+                    &project,
+                    &worker_output,
+                    options,
+                    &worker_cancel,
+                    |progress| {
                         if let Ok(mut state) = progress_state.lock() {
                             *state = JobState::Running {
                                 fraction: progress.fraction,
                             };
                         }
                         progress_ctx.request_repaint();
-                    });
+                    },
+                );
                 let final_state = match result {
-                    Ok(()) => {
-                        let summary = summarize(&worker_output);
+                    Ok(report) => {
+                        let path = match report.path {
+                            ExportPath::FfmpegOnly => "FFmpeg",
+                            ExportPath::GpuComposite => "GPU (texto composto no wgpu)",
+                        };
+                        let summary = format!("{} · via {path}", summarize(&worker_output));
                         tracing::info!(%summary, "export finished");
                         JobState::Done { summary }
                     }

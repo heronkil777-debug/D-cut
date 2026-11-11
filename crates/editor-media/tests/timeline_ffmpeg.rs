@@ -140,7 +140,7 @@ fn reference_frame(path: &Path, index: u64, width: u32, height: u32) -> Vec<u8> 
         .arg(path)
         .arg("-vf")
         .arg(format!(
-            "select=eq(n\\,{index}),scale={width}:{height},format=rgba"
+            "select=eq(n\\,{index}),scale={width}:{height}:in_color_matrix=bt601:in_range=tv,format=rgba"
         ))
         .args([
             "-frames:v",

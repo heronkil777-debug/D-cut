@@ -34,3 +34,26 @@ RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error https://sh.rust
     | sh -s -- -y --default-toolchain 1.95.0 --profile minimal --component rustfmt --component clippy
 
 WORKDIR /workspace
+
+# ---- FFmpeg 7.1 (GPL, no nonfree) bundled into the AppImage ----------------------------
+# Codecs from Ubuntu 22.04 packages (x264, x265, SVT-AV1); VAAPI links to the host libva at
+# runtime (libva is on the AppImage excludelist and is not bundled).
+ARG FFMPEG_VERSION=7.1.5
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nasm patchelf libx264-dev libx265-dev libsvtav1enc-dev libnuma-dev \
+        libva-dev libdrm-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+# The tarball is downloaded and GPG-verified on the host by scripts/build-appimage.sh.
+COPY build/ffmpeg/ffmpeg-${FFMPEG_VERSION}.tar.xz /tmp/ffmpeg.tar.xz
+RUN sha256sum /tmp/ffmpeg.tar.xz | tee /opt/ffmpeg-source.sha256 \
+    && mkdir -p /tmp/ffmpeg-src && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-src --strip-components=1 \
+    && cd /tmp/ffmpeg-src \
+    && ./configure --prefix=/opt/ffmpeg \
+        --enable-gpl --disable-nonfree --disable-autodetect \
+        --enable-shared --disable-static --disable-doc --disable-ffplay --disable-debug \
+        --enable-libx264 --enable-libx265 --enable-libsvtav1 \
+        --enable-vaapi --enable-libdrm --enable-zlib --enable-pthreads \
+    && make -j"$(nproc)" && make install \
+    && cp COPYING.GPLv2 COPYING.LGPLv2.1 LICENSE.md /opt/ffmpeg/ \
+    && echo "${FFMPEG_VERSION}" > /opt/ffmpeg/VERSION \
+    && rm -rf /tmp/ffmpeg-src /tmp/ffmpeg.tar.xz

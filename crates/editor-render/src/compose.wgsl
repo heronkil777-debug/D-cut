@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Draws the current preview frame as a textured quad covering the callback viewport.
+// Composites a straight-alpha overlay layer (titles/subtitles) over the base video frame.
+// The same shader is used for the preview (inside egui) and the offscreen export render.
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
 };
 
-@group(0) @binding(0) var frame_texture: texture_2d<f32>;
-@group(0) @binding(1) var frame_sampler: sampler;
+@group(0) @binding(0) var base_texture: texture_2d<f32>;
+@group(0) @binding(1) var overlay_texture: texture_2d<f32>;
+@group(0) @binding(2) var layer_sampler: sampler;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -28,5 +30,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(textureSample(frame_texture, frame_sampler, input.uv).rgb, 1.0);
+    let base = textureSample(base_texture, layer_sampler, input.uv).rgb;
+    let overlay = textureSample(overlay_texture, layer_sampler, input.uv);
+    return vec4<f32>(mix(base, overlay.rgb, overlay.a), 1.0);
 }

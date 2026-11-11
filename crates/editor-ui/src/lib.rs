@@ -24,12 +24,14 @@ use std::{
 use anyhow::{Context, Result};
 use editor_core::{
     CommandHistory, CoreError, EditCommand, MediaAsset, PRODUCT_NAME, Project, ProjectFormat,
-    Track, TrackKind, TrimEdge, add_media_clips_command, clips_at_frame, delete_clips_command,
-    find_clip, linked_clip_ids, move_command, move_limits, next_free_id, split_at_command,
-    trim_command, trim_limits, unlink_command,
+    TextOverlay, Track, TrackKind, TrimEdge, add_media_clips_command, add_track_command,
+    clips_at_frame, delete_clips_command, find_clip, linked_clip_ids, move_clip_to_track_command,
+    move_command, move_limits, next_free_id, split_at_command, trim_command, trim_limits,
+    unlink_command,
 };
 use editor_media::{MediaInfo, probe, timeline::TimelineRender};
-use editor_render::{FrameRenderer, PreviewFrame};
+use editor_render::{FrameRenderer, PreviewFrame, wgpu};
+use editor_text::{TextRenderer, active_overlays};
 use eframe::egui;
 
 use crate::{
@@ -92,6 +94,19 @@ struct DragState {
     origin_x: f32,
     limits: (i64, i64),
     delta: i64,
+}
+
+/// Editable copy of a text overlay; committed as one undoable command with "Aplicar".
+#[derive(Debug, Clone, PartialEq)]
+struct TextDraft {
+    id: u64,
+    text: String,
+    font_size: f32,
+    x: f32,
+    y: f32,
+    color: [f32; 4],
+    start_seconds: f64,
+    duration_seconds: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,6 +201,7 @@ fn default_project() -> Project {
     };
     Project {
         tracks: vec![
+            track(4, "T1", TrackKind::Subtitle),
             track(1, "V1", TrackKind::Video),
             track(2, "A1", TrackKind::Audio),
             track(3, "A2", TrackKind::Audio),
@@ -330,6 +346,13 @@ struct DcutApp {
     show_library: bool,
     show_inspector: bool,
     layout_frames: u32,
+    gpu: Option<(wgpu::Device, wgpu::Queue)>,
+    text_renderer: TextRenderer,
+    overlay_frame: Option<PreviewFrame>,
+    overlay_key: Option<(Vec<u64>, u64, u32, u32)>,
+    selected_text: Option<u64>,
+    text_draft: Option<TextDraft>,
+    text_drag: Option<(u64, f32, i64)>,
 }
 
 impl DcutApp {
@@ -392,6 +415,16 @@ impl DcutApp {
             show_library: true,
             show_inspector: true,
             layout_frames: 0,
+            gpu: context
+                .wgpu_render_state
+                .as_ref()
+                .map(|state| (state.device.clone(), state.queue.clone())),
+            text_renderer: TextRenderer::new(),
+            overlay_frame: None,
+            overlay_key: None,
+            selected_text: None,
+            text_draft: None,
+            text_drag: None,
         };
         app.hud.visible = std::env::var_os("D_CUT_HUD").is_some();
         for path in startup_files {
@@ -430,6 +463,16 @@ impl DcutApp {
             .is_some_and(|clip| find_clip(&self.project, clip).is_none())
         {
             self.selected_clip = None;
+        }
+        if self.selected_text.is_some_and(|id| {
+            !self
+                .project
+                .text_overlays
+                .iter()
+                .any(|overlay| overlay.id == id)
+        }) {
+            self.selected_text = None;
+            self.text_draft = None;
         }
         let duration = self.project.duration_frames();
         if self.playhead > duration {
@@ -488,6 +531,10 @@ impl DcutApp {
     }
 
     fn delete(&mut self, ripple: bool) {
+        if let Some(id) = self.selected_text {
+            self.delete_text(id);
+            return;
+        }
         let Some(clip) = self.selected_clip else {
             self.status = "Selecione um clipe para excluir".into();
             return;
@@ -507,6 +554,127 @@ impl DcutApp {
         if let Some(clip) = self.selected_clip {
             let command = unlink_command(&self.project, clip);
             self.run_edit(command, "Áudio desvinculado do vídeo");
+        }
+    }
+
+    fn subtitle_track_id(&self) -> Option<u64> {
+        self.project
+            .tracks
+            .iter()
+            .find(|track| track.kind == TrackKind::Subtitle)
+            .map(|track| track.id)
+    }
+
+    fn replace_texts(&mut self, replacement: Vec<TextOverlay>, message: &str) -> bool {
+        let command = EditCommand::ReplaceTextOverlays {
+            expected: self.project.text_overlays.clone(),
+            replacement,
+        };
+        self.run_edit(Ok(command), message)
+    }
+
+    fn add_text(&mut self) {
+        let fps = self.fps();
+        let id = next_free_id(&self.project);
+        let overlay = TextOverlay {
+            id,
+            track_id: self.subtitle_track_id(),
+            start_frame: self.playhead,
+            duration_frames: (fps * 3.0).round() as u64,
+            text: "Seu texto".to_owned(),
+            x: 0.5,
+            y: 0.5,
+            font_size: self.project.format.height as f32 / 12.0,
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        let mut texts = self.project.text_overlays.clone();
+        texts.push(overlay);
+        if self.replace_texts(texts, "Texto adicionado no playhead") {
+            self.select_text(id);
+        }
+    }
+
+    fn select_text(&mut self, id: u64) {
+        self.selected_text = Some(id);
+        self.selected_clip = None;
+        let format = self.project.format;
+        self.text_draft = self
+            .project
+            .text_overlays
+            .iter()
+            .find(|overlay| overlay.id == id)
+            .map(|overlay| TextDraft {
+                id,
+                text: overlay.text.clone(),
+                font_size: overlay.font_size,
+                x: overlay.x,
+                y: overlay.y,
+                color: overlay.color,
+                start_seconds: format.frames_to_seconds(overlay.start_frame),
+                duration_seconds: format.frames_to_seconds(overlay.duration_frames),
+            });
+    }
+
+    fn apply_text_draft(&mut self) {
+        let Some(draft) = self.text_draft.clone() else {
+            return;
+        };
+        let format = self.project.format;
+        let mut texts = self.project.text_overlays.clone();
+        if let Some(overlay) = texts.iter_mut().find(|overlay| overlay.id == draft.id) {
+            overlay.text = draft.text.clone();
+            overlay.font_size = draft.font_size.max(4.0);
+            overlay.x = draft.x.clamp(0.0, 1.0);
+            overlay.y = draft.y.clamp(0.0, 1.0);
+            overlay.color = draft.color.map(|channel| channel.clamp(0.0, 1.0));
+            overlay.start_frame = format.seconds_to_frame(draft.start_seconds);
+            overlay.duration_frames = format.seconds_to_frame(draft.duration_seconds).max(1);
+        }
+        self.replace_texts(texts, "Texto atualizado");
+        self.select_text(draft.id);
+    }
+
+    fn delete_text(&mut self, id: u64) {
+        let texts = self
+            .project
+            .text_overlays
+            .iter()
+            .filter(|overlay| overlay.id != id)
+            .cloned()
+            .collect();
+        if self.replace_texts(texts, "Texto excluído") {
+            self.selected_text = None;
+            self.text_draft = None;
+        }
+    }
+
+    fn import_srt(&mut self, path: &Path) {
+        let source = match fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(error) => {
+                self.status = format!("Não foi possível ler {}: {error}", path.display());
+                return;
+            }
+        };
+        let format = self.project.format;
+        let track = self.subtitle_track_id();
+        match editor_project::parse_srt(
+            &source,
+            next_free_id(&self.project),
+            track,
+            format.frame_rate_numerator,
+            format.frame_rate_denominator,
+        ) {
+            Ok(mut cues) => {
+                for cue in &mut cues {
+                    cue.font_size = format.height as f32 / 18.0;
+                }
+                let count = cues.len();
+                let mut texts = self.project.text_overlays.clone();
+                texts.extend(cues);
+                self.replace_texts(texts, &format!("{count} legenda(s) importada(s)"));
+            }
+            Err(error) => self.status = format!("SRT inválido: {error}"),
         }
     }
 
@@ -848,6 +1016,11 @@ impl DcutApp {
                             self.perform(action);
                         }
                     }
+                    Purpose::ImportSubtitles => {
+                        if let Some(path) = paths.into_iter().next() {
+                            self.import_srt(&path);
+                        }
+                    }
                     Purpose::ExportVideo => {
                         if let (Some(path), Some(settings)) =
                             (paths.into_iter().next(), &mut self.export_settings)
@@ -985,6 +1158,39 @@ impl DcutApp {
                 Err(error) => self.status = format!("Falha na prévia: {error}"),
             }
         }
+    }
+
+    /// Rasterizes the text layer for the frame on screen (cached until the active set changes).
+    fn update_overlay(&mut self) {
+        let Some(frame) = &self.preview_frame else {
+            self.overlay_frame = None;
+            return;
+        };
+        let (width, height) = (frame.width, frame.height);
+        let shown = self
+            .preview_frame_key
+            .map_or(self.playhead, |(frame, _)| frame);
+        let active: Vec<u64> = active_overlays(&self.project, shown)
+            .iter()
+            .map(|overlay| overlay.id)
+            .collect();
+        let key = (active, self.generation, width, height);
+        if self.overlay_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.overlay_key = Some(key);
+        let layer = self
+            .text_renderer
+            .render_frame(&self.project, shown, width, height);
+        self.overlay_frame = layer.map(|rgba| {
+            self.frame_counter += 1;
+            PreviewFrame {
+                width,
+                height,
+                rgba: Arc::new(rgba),
+                generation: self.frame_counter,
+            }
+        });
     }
 
     fn seek(&mut self, frame: u64) {
@@ -1199,7 +1405,11 @@ impl DcutApp {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading(strings::INSPECTOR);
                     ui.separator();
-                    self.clip_inspector(ui);
+                    if self.selected_text.is_some() {
+                        self.text_inspector(ui);
+                    } else {
+                        self.clip_inspector(ui);
+                    }
                     ui.separator();
                     self.format_inspector(ui);
                     ui.separator();
@@ -1288,6 +1498,72 @@ impl DcutApp {
                 self.unlink();
             }
         });
+        let kind = self.project.tracks[track_index].kind;
+        let others: Vec<(u64, String)> = self
+            .project
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(index, other)| *index != track_index && other.kind == kind)
+            .map(|(_, other)| (other.id, other.name.clone()))
+            .collect();
+        if !others.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Mover para:");
+                for (track_id, name) in others {
+                    if ui.button(name).clicked() {
+                        let command = move_clip_to_track_command(&self.project, clip_id, track_id);
+                        self.run_edit(command, "Clipe movido de faixa");
+                    }
+                }
+            });
+        }
+    }
+
+    fn text_inspector(&mut self, ui: &mut egui::Ui) {
+        let Some(draft) = &mut self.text_draft else {
+            ui.weak(strings::NOTHING_SELECTED);
+            return;
+        };
+        ui.strong("Texto");
+        ui.add(
+            egui::TextEdit::multiline(&mut draft.text)
+                .desired_rows(2)
+                .desired_width(f32::INFINITY),
+        );
+        ui.add(egui::Slider::new(&mut draft.font_size, 8.0..=400.0).text("Tamanho"));
+        ui.add(egui::Slider::new(&mut draft.y, 0.0..=1.0).text("Altura (0 topo)"));
+        ui.add(egui::Slider::new(&mut draft.x, 0.0..=1.0).text("Horizontal"));
+        ui.horizontal(|ui| {
+            ui.label("Cor");
+            ui.color_edit_button_rgba_unmultiplied(&mut draft.color);
+        });
+        ui.horizontal(|ui| {
+            ui.label("Início (s)");
+            ui.add(
+                egui::DragValue::new(&mut draft.start_seconds)
+                    .speed(0.05)
+                    .range(0.0..=f64::MAX),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Duração (s)");
+            ui.add(
+                egui::DragValue::new(&mut draft.duration_seconds)
+                    .speed(0.05)
+                    .range(0.04..=f64::MAX),
+            );
+        });
+        let id = draft.id;
+        ui.horizontal(|ui| {
+            if ui.button("Aplicar").clicked() {
+                self.apply_text_draft();
+            }
+            if ui.button(strings::DELETE).clicked() {
+                self.delete_text(id);
+            }
+        });
+        ui.small("Texto e legendas são compostos na GPU (mesmo shader da prévia e do export).");
     }
 
     fn format_inspector(&mut self, ui: &mut egui::Ui) {
@@ -1410,7 +1686,12 @@ impl DcutApp {
                             egui::Color32::GRAY,
                         );
                     } else if let Some(renderer) = &self.renderer {
-                        renderer.paint(&painter, rect, self.preview_frame.clone());
+                        renderer.paint(
+                            &painter,
+                            rect,
+                            self.preview_frame.clone(),
+                            self.overlay_frame.clone(),
+                        );
                     } else {
                         painter.text(
                             rect.center(),
@@ -1592,6 +1873,33 @@ impl DcutApp {
                     {
                         self.fit_timeline(ui.available_width());
                     }
+                    ui.separator();
+                    if ui
+                        .button("+ Texto")
+                        .on_hover_text("Título no playhead (T)")
+                        .clicked()
+                    {
+                        self.add_text();
+                    }
+                    if ui.button("Legendas .srt…").clicked() {
+                        self.open_dialog(Purpose::ImportSubtitles);
+                    }
+                    if ui
+                        .button("+ Faixa V")
+                        .on_hover_text("Nova faixa de vídeo (por cima)")
+                        .clicked()
+                    {
+                        let command = add_track_command(&self.project, TrackKind::Video);
+                        self.run_edit(Ok(command), "Faixa de vídeo adicionada");
+                    }
+                    if ui
+                        .button("+ Faixa A")
+                        .on_hover_text("Nova faixa de áudio")
+                        .clicked()
+                    {
+                        let command = add_track_command(&self.project, TrackKind::Audio);
+                        self.run_edit(Ok(command), "Faixa de áudio adicionada");
+                    }
                 });
                 // Reserve the full status row (text + spacing) so the panel never grows by itself.
                 let status_height = ui.text_style_height(&egui::TextStyle::Small)
@@ -1744,7 +2052,7 @@ impl DcutApp {
                 egui::Color32::LIGHT_GRAY,
             );
             painter.rect_filled(lane, egui::CornerRadius::same(2), PANEL);
-            if track.clips.is_empty() && index == 0 && duration == 0 {
+            if track.kind == TrackKind::Video && duration == 0 {
                 painter.text(
                     lane.left_center() + egui::vec2(10.0, 0.0),
                     egui::Align2::LEFT_CENTER,
@@ -1752,6 +2060,102 @@ impl DcutApp {
                     egui::FontId::proportional(12.0),
                     egui::Color32::GRAY,
                 );
+            }
+            if track.kind == TrackKind::Subtitle {
+                let first_subtitle = tracks
+                    .iter()
+                    .find(|other| other.kind == TrackKind::Subtitle)
+                    .map(|other| other.id)
+                    == Some(track.id);
+                let overlays: Vec<TextOverlay> = self
+                    .project
+                    .text_overlays
+                    .iter()
+                    .filter(|overlay| {
+                        overlay.track_id == Some(track.id)
+                            || (overlay.track_id.is_none() && first_subtitle)
+                    })
+                    .cloned()
+                    .collect();
+                for overlay in overlays {
+                    let mut start = overlay.start_frame as i64;
+                    if let Some((id, _, delta)) = self.text_drag
+                        && id == overlay.id
+                    {
+                        start = (start + delta).max(0);
+                    }
+                    let x0 = x_of(start as f64);
+                    let x1 = x_of((start + overlay.duration_frames as i64) as f64);
+                    let rect = egui::Rect::from_min_max(
+                        egui::pos2(x0, lane.top() + 2.0),
+                        egui::pos2(x1.max(x0 + 3.0), lane.bottom() - 2.0),
+                    );
+                    let visible = rect.intersect(content);
+                    if visible.width() <= 0.0 {
+                        continue;
+                    }
+                    let text_painter = painter.with_clip_rect(visible);
+                    text_painter.rect_filled(
+                        rect,
+                        egui::CornerRadius::same(4),
+                        egui::Color32::from_rgb(150, 90, 40),
+                    );
+                    let label = overlay.text.lines().next().unwrap_or("").to_owned();
+                    text_painter.text(
+                        egui::pos2(visible.left() + 5.0, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        format!("T {label}"),
+                        egui::FontId::proportional(11.0),
+                        egui::Color32::WHITE,
+                    );
+                    if self.selected_text == Some(overlay.id) {
+                        text_painter.rect_stroke(
+                            rect,
+                            egui::CornerRadius::same(4),
+                            egui::Stroke::new(2.0, egui::Color32::WHITE),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    let response = ui.interact(
+                        visible,
+                        ui.scope_id().with(("text", overlay.id)),
+                        egui::Sense::click_and_drag(),
+                    );
+                    if response.hovered() || response.dragged() {
+                        clip_hit = true;
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                    }
+                    if response.clicked() {
+                        self.select_text(overlay.id);
+                    }
+                    if response.drag_started()
+                        && let Some(pos) = response.interact_pointer_pos()
+                    {
+                        self.select_text(overlay.id);
+                        self.text_drag = Some((overlay.id, pos.x, 0));
+                    }
+                    if response.dragged()
+                        && let (Some((id, origin, _)), Some(pos)) =
+                            (self.text_drag, response.interact_pointer_pos())
+                        && id == overlay.id
+                    {
+                        let delta = ((pos.x - origin) / ppf).round() as i64;
+                        self.text_drag = Some((id, origin, delta));
+                    }
+                    if response.drag_stopped()
+                        && let Some((id, _, delta)) = self.text_drag.take()
+                        && id == overlay.id
+                        && delta != 0
+                    {
+                        let mut texts = self.project.text_overlays.clone();
+                        if let Some(item) = texts.iter_mut().find(|item| item.id == id) {
+                            item.start_frame = item.start_frame.saturating_add_signed(delta);
+                        }
+                        self.replace_texts(texts, "Texto movido");
+                        self.select_text(id);
+                    }
+                }
+                continue;
             }
             for clip in &track.clips {
                 let mut start = clip.timeline_start_frame as i64;
@@ -1917,6 +2321,8 @@ impl DcutApp {
                     }
                     if response.clicked() {
                         self.selected_clip = Some(clip.id);
+                        self.selected_text = None;
+                        self.text_draft = None;
                         clip_hit = true;
                     }
                     if response.drag_started() {
@@ -2020,6 +2426,8 @@ impl DcutApp {
             self.seek(frame_of(pos.x));
             if response.clicked() && pos.y > ruler.bottom() {
                 self.selected_clip = None;
+                self.selected_text = None;
+                self.text_draft = None;
             }
         }
 
@@ -2225,22 +2633,14 @@ impl DcutApp {
             self.status = format!("Não foi possível criar a pasta de saída: {error}");
             return;
         }
-        let format = self.project.format;
-        let job = match TimelineRender::from_project(
-            &self.project,
-            0,
-            self.project.duration_frames(),
-            format.width,
-            format.height,
-        ) {
-            Ok(job) => job,
-            Err(error) => {
-                self.status = format!("Não foi possível exportar: {error}");
-                return;
-            }
-        };
         self.stop_playback();
-        self.export_job = Some(ExportJob::start(ctx.clone(), job, encoder, output));
+        self.export_job = Some(ExportJob::start(
+            ctx.clone(),
+            self.project.clone(),
+            encoder,
+            self.gpu.clone(),
+            output,
+        ));
         self.status = "Exportando…".into();
     }
 
@@ -2322,6 +2722,7 @@ impl DcutApp {
                     pressed(egui::Key::F3),
                     pressed(egui::Key::N),
                     pressed(egui::Key::Q),
+                    pressed(egui::Key::T),
                 ],
             )
         });
@@ -2345,7 +2746,11 @@ impl DcutApp {
             f3,
             n,
             q,
+            t,
         ] = keys;
+        if t && !ctrl {
+            self.add_text();
+        }
         if ctrl && q {
             self.request_action(PendingAction::Close);
         }
@@ -2508,6 +2913,7 @@ impl eframe::App for DcutApp {
             self.inspector_panel(ui);
         }
         self.update_preview(&ctx);
+        self.update_overlay();
         self.preview_panel(ui);
         self.handle_dialog(&ctx);
         self.export_window(&ctx);

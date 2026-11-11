@@ -15,6 +15,7 @@ pub use edit::{
     linked_clip_ids, move_command, move_limits, next_free_id, split_at_command, trim_command,
     trim_limits, unlink_command,
 };
+pub use edit::{add_track_command, move_clip_to_track_command};
 pub use plan::{PlanSegment, SegmentSource, audio_plans, video_plan};
 
 /// The product name shown in project metadata and command-line output.
@@ -546,6 +547,15 @@ pub enum EditCommand {
         expected: ProjectFormat,
         replacement: ProjectFormat,
     },
+    ReplaceTextOverlays {
+        expected: Vec<TextOverlay>,
+        replacement: Vec<TextOverlay>,
+    },
+    /// Replaces the whole track list (adding/removing/reordering tracks, moving clips across tracks).
+    ReplaceTracks {
+        expected: Vec<Track>,
+        replacement: Vec<Track>,
+    },
     /// Applies all commands in order; if one fails, the already applied ones are rolled back.
     Batch(Vec<EditCommand>),
 }
@@ -612,6 +622,40 @@ impl EditCommand {
                 Ok(Self::SetFormat {
                     expected: replacement,
                     replacement: expected,
+                })
+            }
+            Self::ReplaceTextOverlays {
+                expected,
+                replacement,
+            } => {
+                if project.text_overlays != expected {
+                    return Err(CoreError::StaleProject);
+                }
+                let old = std::mem::replace(&mut project.text_overlays, replacement.clone());
+                if let Err(error) = project.validate() {
+                    project.text_overlays = old;
+                    return Err(error);
+                }
+                Ok(Self::ReplaceTextOverlays {
+                    expected: replacement,
+                    replacement: old,
+                })
+            }
+            Self::ReplaceTracks {
+                expected,
+                replacement,
+            } => {
+                if project.tracks != expected {
+                    return Err(CoreError::StaleProject);
+                }
+                let old = std::mem::replace(&mut project.tracks, replacement.clone());
+                if let Err(error) = project.validate() {
+                    project.tracks = old;
+                    return Err(error);
+                }
+                Ok(Self::ReplaceTracks {
+                    expected: replacement,
+                    replacement: old,
                 })
             }
             Self::Batch(commands) => {
@@ -1263,5 +1307,51 @@ mod tests {
             while history.redo(&mut project).map_err(|error| TestCaseError::fail(error.to_string()))? {}
             prop_assert_eq!(&project, &final_state);
         }
+    }
+
+    #[test]
+    fn tracks_and_text_commands_round_trip() {
+        let mut project = editor_project();
+        let original = project.clone();
+        let mut history = CommandHistory::default();
+        let (command, created) = add_media_clips_command(&project, 1).expect("add");
+        history.execute(&mut project, command).expect("applies");
+        let command = add_track_command(&project, TrackKind::Video);
+        history.execute(&mut project, command).expect("track");
+        assert_eq!(project.tracks[0].name, "V2");
+        let v2 = project.tracks[0].id;
+        let command = move_clip_to_track_command(&project, created[0], v2).expect("move");
+        history.execute(&mut project, command).expect("applies");
+        assert_eq!(project.tracks[0].clips.len(), 1);
+        assert!(project.tracks[1].clips.is_empty());
+        // The top video track wins in the render plan.
+        let plan = video_plan(&project, 0, 10);
+        assert_eq!(
+            plan[0].source.map(|source| source.clip_id),
+            Some(created[0])
+        );
+        let overlay = TextOverlay {
+            id: next_free_id(&project),
+            track_id: None,
+            start_frame: 0,
+            duration_frames: 30,
+            text: "Título".into(),
+            x: 0.5,
+            y: 0.5,
+            font_size: 80.0,
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        history
+            .execute(
+                &mut project,
+                EditCommand::ReplaceTextOverlays {
+                    expected: Vec::new(),
+                    replacement: vec![overlay],
+                },
+            )
+            .expect("text");
+        assert_eq!(project.text_overlays.len(), 1);
+        while history.undo(&mut project).expect("undo") {}
+        assert_eq!(project, original);
     }
 }

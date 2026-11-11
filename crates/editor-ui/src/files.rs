@@ -23,6 +23,7 @@ pub enum Purpose {
     OpenProject,
     SaveProject,
     ExportVideo,
+    ImportSubtitles,
 }
 
 impl Purpose {
@@ -32,6 +33,7 @@ impl Purpose {
             Self::OpenProject => "Abrir projeto",
             Self::SaveProject => "Salvar projeto",
             Self::ExportVideo => "Arquivo de saída",
+            Self::ImportSubtitles => "Importar legendas (.srt)",
         }
     }
 
@@ -44,6 +46,7 @@ impl Purpose {
             Self::ImportMedia => MEDIA_EXTENSIONS,
             Self::OpenProject | Self::SaveProject => PROJECT_EXTENSIONS,
             Self::ExportVideo => &["mp4"],
+            Self::ImportSubtitles => &["srt"],
         }
     }
 
@@ -296,6 +299,7 @@ impl FileDialog {
                             Purpose::OpenProject => "Abrir",
                             Purpose::SaveProject => "Salvar",
                             Purpose::ExportVideo => "Usar este arquivo",
+                            Purpose::ImportSubtitles => "Importar",
                         };
                         let enabled = if self.purpose.is_save() {
                             self.save_target().is_some()

@@ -83,7 +83,7 @@ fn run() -> Result<()> {
         Some("export-vaapi") => run_export(args, true),
         Some("--help" | "-h") | None => {
             println!(
-                "D-cut local project and media tools\n\nUsage:\n  d-cut-cli --version\n  d-cut-cli validate-project <project.dcut>\n  d-cut-cli import-srt <input.srt> <output.dcut> <fps-num> <fps-den>\n  d-cut-cli probe <media-file>\n  d-cut-cli render-project <project.dcut> <output.mp4> [--fast] [--crf N] [--preset NAME] [--qp N] [--vaapi-device PATH]\n  d-cut-cli export-quality <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <crf>\n  d-cut-cli export-vaapi <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <device> <qp>\n\nrender-project uses the same FFmpeg timeline graph as the editor export: H.264 + AAC 48 kHz,\nyuv420p, BT.709, +faststart. --fast uses VAAPI (h264_vaapi); the default uses libx264 CRF 20.\nFFmpeg and ffprobe must be installed (or set D_CUT_FFMPEG / D_CUT_FFPROBE)."
+                "D-cut local project and media tools\n\nUsage:\n  d-cut-cli --version\n  d-cut-cli validate-project <project.dcut>\n  d-cut-cli import-srt <input.srt> <output.dcut> <fps-num> <fps-den>\n  d-cut-cli probe <media-file>\n  d-cut-cli render-project <project.dcut> <output.mp4> [--fast] [--crf N] [--preset NAME] [--qp N] [--vaapi-device PATH] [--gpu-composite]\n  d-cut-cli export-quality <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <crf>\n  d-cut-cli export-vaapi <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <device> <qp>\n\nrender-project uses the same FFmpeg timeline graph as the editor export: H.264 + AAC 48 kHz,\nyuv420p, BT.709, +faststart. --fast uses VAAPI (h264_vaapi); the default uses libx264 CRF 20.\nFFmpeg and ffprobe must be installed (or set D_CUT_FFMPEG / D_CUT_FFPROBE)."
             );
             Ok(())
         }
@@ -127,9 +127,11 @@ fn run_render_project(mut args: impl Iterator<Item = String>) -> Result<()> {
     let mut preset = "medium".to_owned();
     let mut qp: u8 = 22;
     let mut device = PathBuf::from("/dev/dri/renderD128");
+    let mut force_gpu = false;
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--fast" => fast = true,
+            "--gpu-composite" => force_gpu = true,
             "--crf" => crf = parse_next(&mut args, "CRF")?,
             "--preset" => preset = args.next().context("missing preset")?,
             "--qp" => qp = parse_next(&mut args, "QP")?,
@@ -145,13 +147,6 @@ fn run_render_project(mut args: impl Iterator<Item = String>) -> Result<()> {
     if total == 0 {
         bail!("the project timeline is empty");
     }
-    let job = editor_media::timeline::TimelineRender::from_project(
-        &project,
-        0,
-        total,
-        project.format.width,
-        project.format.height,
-    )?;
     let encoder = if fast {
         editor_media::timeline::ExportEncoder::Vaapi { device, qp }
     } else {
@@ -159,15 +154,32 @@ fn run_render_project(mut args: impl Iterator<Item = String>) -> Result<()> {
     };
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut last_percent = None;
-    editor_media::timeline::export_timeline(&job, &encoder, &output, &cancel, |progress| {
-        let percent = (progress.fraction * 100.0).floor() as u32;
-        if last_percent != Some(percent) {
-            last_percent = Some(percent);
-            eprint!("\rrendering… {percent:3}%");
-        }
-    })
+    let report = editor_export::export_project(
+        &project,
+        &output,
+        editor_export::ExportOptions {
+            encoder,
+            force_gpu,
+            device: None,
+        },
+        &cancel,
+        |progress| {
+            let percent = (progress.fraction * 100.0).floor() as u32;
+            if last_percent != Some(percent) {
+                last_percent = Some(percent);
+                eprint!("\rrendering… {percent:3}%");
+            }
+        },
+    )
     .context("export failed")?;
     eprintln!();
+    println!(
+        "Path: {:?} · {} frames in {:.2} s ({:.1} fps)",
+        report.path,
+        report.frames,
+        report.seconds,
+        report.frames as f64 / report.seconds.max(1e-6)
+    );
     let info = editor_media::probe(&output).context("could not probe the exported file")?;
     println!(
         "Rendered {} ({:.3} s, {} frames at {}/{} fps)",

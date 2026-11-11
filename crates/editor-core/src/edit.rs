@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::{Clip, CoreError, EditCommand, Project, TrackKind};
+use crate::{Clip, CoreError, EditCommand, Project, Track, TrackKind};
 
 /// Which edge of a clip a trim operation moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -428,4 +428,75 @@ fn adjust_clips(
             )
             .collect(),
     ))
+}
+
+/// Adds a track. Video tracks are inserted above the existing video tracks (earlier tracks are
+/// drawn on top); other kinds are appended after the last track of the same kind.
+pub fn add_track_command(project: &Project, kind: TrackKind) -> EditCommand {
+    let count = project
+        .tracks
+        .iter()
+        .filter(|track| track.kind == kind)
+        .count()
+        + 1;
+    let prefix = match kind {
+        TrackKind::Video => "V",
+        TrackKind::Audio => "A",
+        TrackKind::Subtitle => "T",
+    };
+    let track = Track {
+        id: next_free_id(project),
+        name: format!("{prefix}{count}"),
+        kind,
+        clips: Vec::new(),
+    };
+    let mut tracks = project.tracks.clone();
+    let index = match kind {
+        TrackKind::Video => tracks
+            .iter()
+            .position(|track| track.kind == TrackKind::Video)
+            .unwrap_or(tracks.len()),
+        _ => tracks
+            .iter()
+            .rposition(|track| track.kind == kind)
+            .map_or(tracks.len(), |index| index + 1),
+    };
+    tracks.insert(index, track);
+    EditCommand::ReplaceTracks {
+        expected: project.tracks.clone(),
+        replacement: tracks,
+    }
+}
+
+/// Moves one clip (not its linked partners) to another track of the same kind, keeping its time.
+pub fn move_clip_to_track_command(
+    project: &Project,
+    clip_id: u64,
+    target_track_id: u64,
+) -> Result<EditCommand, CoreError> {
+    let (track_index, clip_index) =
+        find_clip(project, clip_id).ok_or(CoreError::MissingClip(clip_id))?;
+    let target_index = project
+        .tracks
+        .iter()
+        .position(|track| track.id == target_track_id)
+        .ok_or(CoreError::MissingTrack(target_track_id))?;
+    if target_index == track_index {
+        return Err(CoreError::InvalidEdit("clip is already on that track"));
+    }
+    if project.tracks[target_index].kind != project.tracks[track_index].kind {
+        return Err(CoreError::InvalidEdit("tracks must be of the same kind"));
+    }
+    let mut tracks = project.tracks.clone();
+    let clip = tracks[track_index].clips.remove(clip_index);
+    let target = &mut tracks[target_index].clips;
+    let position = target
+        .iter()
+        .position(|other| other.timeline_start_frame > clip.timeline_start_frame)
+        .unwrap_or(target.len());
+    target.insert(position, clip);
+    Ok(EditCommand::ReplaceTracks {
+        expected: project.tracks.clone(),
+        replacement: tracks,
+    })
 }

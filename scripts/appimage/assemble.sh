@@ -34,6 +34,45 @@ install -m 0644 assets/branding/d-cut-icon.png "${app_dir}/usr/share/icons/hicol
 install -m 0644 assets/branding/d-cut-icon-256.png "${app_dir}/d-cut.png"
 ln -sfn d-cut.png "${app_dir}/.DirIcon"
 
+# Bundle FFmpeg when it was built (container). Codec and libav* libraries go to usr/lib with
+# an $ORIGIN rpath; host driver/system libraries (libva, libdrm, libc, libz...) are not copied.
+ffmpeg_prefix="${FFMPEG_PREFIX:-/opt/ffmpeg}"
+if [ -x "${ffmpeg_prefix}/bin/ffmpeg" ]; then
+    mkdir -p "${app_dir}/usr/lib" "${app_dir}/usr/share/licenses/ffmpeg"
+    install -m 0755 "${ffmpeg_prefix}/bin/ffmpeg" "${ffmpeg_prefix}/bin/ffprobe" "${app_dir}/usr/bin/"
+    for binary in ffmpeg ffprobe; do
+        LD_LIBRARY_PATH="${ffmpeg_prefix}/lib" ldd "${ffmpeg_prefix}/bin/${binary}" \
+            | awk '/=> \// {print $3}' \
+            | grep -E '/opt/ffmpeg/lib/|libx264|libx265|libSvtAv1Enc|libnuma' || true
+    done | sort -u | while read -r library; do
+        cp -L "${library}" "${app_dir}/usr/lib/"
+    done
+    for file in "${app_dir}/usr/bin/ffmpeg" "${app_dir}/usr/bin/ffprobe" "${app_dir}"/usr/lib/*.so*; do
+        patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN' "${file}"
+    done
+    cp "${ffmpeg_prefix}"/COPYING.GPLv2 "${ffmpeg_prefix}"/COPYING.LGPLv2.1 "${ffmpeg_prefix}"/LICENSE.md \
+        "${app_dir}/usr/share/licenses/ffmpeg/"
+    for package in libx264-163 libx265-199 libsvtav1enc0 libnuma1; do
+        if [ -f "/usr/share/doc/${package}/copyright" ]; then
+            cp "/usr/share/doc/${package}/copyright" "${app_dir}/usr/share/licenses/ffmpeg/${package}.copyright"
+        fi
+    done
+    {
+        printf 'FFmpeg %s (GPL build, no nonfree)\n' "$(cat "${ffmpeg_prefix}/VERSION")"
+        printf 'Source: https://ffmpeg.org/releases/ffmpeg-%s.tar.xz\n' "$(cat "${ffmpeg_prefix}/VERSION")"
+        printf 'Source sha256: %s\n' "$(cut -d' ' -f1 /opt/ffmpeg-source.sha256 2>/dev/null)"
+        printf 'Codec packages (Ubuntu 22.04, sources at https://packages.ubuntu.com/source/jammy/):\n'
+        dpkg-query -W -f='  ${Package} ${Version}\n' libx264-dev libx265-dev libsvtav1enc-dev libnuma-dev 2>/dev/null || true
+        printf 'Bundled libraries:\n'
+        (cd "${app_dir}/usr/lib" && ls -1 | sed 's/^/  /')
+        printf 'Build configuration:\n'
+        LD_LIBRARY_PATH="${app_dir}/usr/lib" "${app_dir}/usr/bin/ffmpeg" -hide_banner -buildconf | sed 's/^/  /'
+    } > "${app_dir}/usr/share/licenses/ffmpeg/BUILD-MANIFEST.txt"
+    printf 'Bundled FFmpeg: %s\n' "$(du -sh "${app_dir}/usr/lib" | cut -f1) of libraries"
+else
+    printf '%s\n' 'Note: FFmpeg not bundled (provisional build; uses the host ffmpeg).'
+fi
+
 mkdir -p "${tools_dir}"
 tool="${tools_dir}/appimagetool-x86_64.AppImage"
 if [ ! -x "${tool}" ]; then

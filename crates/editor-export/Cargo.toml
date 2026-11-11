@@ -1,0 +1,17 @@
+[package]
+name = "editor-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+editor-core.workspace = true
+editor-media.workspace = true
+editor-render.workspace = true
+editor-text.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+editor-project.workspace = true
