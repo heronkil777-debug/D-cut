@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         file \
         git \
+        libasound2-dev \
         libgl1-mesa-dev \
         libvulkan-dev \
         libwayland-dev \

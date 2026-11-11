@@ -91,6 +91,9 @@ struct AudioShared {
     underruns: AtomicU64,
     finished: AtomicBool,
     started: AtomicBool,
+    /// Nanoseconds since `epoch` at the end of the last callback that consumed samples.
+    last_callback_nanos: AtomicU64,
+    epoch: Instant,
 }
 
 /// An open sound-card stream fed by an FFmpeg timeline-mix process.
@@ -121,6 +124,8 @@ impl AudioOutput {
             underruns: AtomicU64::new(0),
             finished: AtomicBool::new(false),
             started: AtomicBool::new(false),
+            last_callback_nanos: AtomicU64::new(0),
+            epoch: Instant::now(),
         });
         let error_callback = |error| tracing::warn!(%error, "audio stream error");
         let stream = match supported.sample_format() {
@@ -188,9 +193,21 @@ impl AudioOutput {
         Ok(())
     }
 
-    /// Seconds of audio consumed by the device since start (the master clock).
+    /// Seconds of audio consumed by the device since start (the master clock). Between
+    /// callbacks the clock is interpolated with wall time (capped at 50 ms) so it advances
+    /// smoothly instead of in callback-sized steps.
     pub fn clock_seconds(&self) -> f64 {
-        self.shared.played_frames.load(Ordering::Relaxed) as f64 / f64::from(self.sample_rate)
+        let consumed =
+            self.shared.played_frames.load(Ordering::Relaxed) as f64 / f64::from(self.sample_rate);
+        let last = self.shared.last_callback_nanos.load(Ordering::Relaxed);
+        if consumed <= 0.0 || last == 0 {
+            return consumed;
+        }
+        let now = self.shared.epoch.elapsed().as_nanos() as f64;
+        let since = ((now - last as f64) / 1e9).clamp(0.0, 0.05);
+        let starved =
+            self.buffered_seconds() <= 0.0 && !self.shared.finished.load(Ordering::Relaxed);
+        if starved { consumed } else { consumed + since }
     }
 
     pub fn underruns(&self) -> u64 {
@@ -237,6 +254,12 @@ fn fill<T: Copy + Default>(
         data.fill(T::default());
     }
     shared.played_frames.fetch_add(played, Ordering::Relaxed);
+    if played > 0 {
+        let nanos = u64::try_from(shared.epoch.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        shared
+            .last_callback_nanos
+            .store(nanos.max(1), Ordering::Relaxed);
+    }
     if starved && shared.started.load(Ordering::Relaxed) && !shared.finished.load(Ordering::Relaxed)
     {
         shared.underruns.fetch_add(1, Ordering::Relaxed);
@@ -277,7 +300,7 @@ fn decode_audio(job: TimelineRender, sample_rate: u32, shared: &AudioShared, sto
 }
 
 /// Statistics shown by the debug HUD and logged at the end of playback.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct PlaybackStats {
     pub shown: u64,
     pub dropped: u64,
@@ -287,6 +310,52 @@ pub struct PlaybackStats {
     pub max_abs_offset_ms: f64,
     pub sum_offset_ms: f64,
     pub audio_buffer_ms: f64,
+    /// Mean offset over the first 10 s of playback, and over the most recent 300 frames.
+    first_window: (f64, u64),
+    recent: [f64; 300],
+    recent_len: usize,
+    recent_next: usize,
+}
+
+impl PlaybackStats {
+    fn record(&mut self, offset_ms: f64, played_seconds: f64) {
+        if played_seconds < 10.0 {
+            self.first_window.0 += offset_ms;
+            self.first_window.1 += 1;
+        }
+        self.recent[self.recent_next] = offset_ms;
+        self.recent_next = (self.recent_next + 1) % self.recent.len();
+        self.recent_len = (self.recent_len + 1).min(self.recent.len());
+    }
+
+    /// A/V drift: change of the mean offset between the first 10 s and the last ~10 s.
+    /// The per-frame offset itself is bounded by one frame period (frame quantization).
+    pub fn drift_ms(&self) -> f64 {
+        if self.first_window.1 == 0 || self.recent_len == 0 {
+            return 0.0;
+        }
+        let first = self.first_window.0 / self.first_window.1 as f64;
+        let recent = self.recent[..self.recent_len].iter().sum::<f64>() / self.recent_len as f64;
+        (recent - first).abs()
+    }
+}
+
+impl Default for PlaybackStats {
+    fn default() -> Self {
+        Self {
+            shown: 0,
+            dropped: 0,
+            underruns: 0,
+            last_offset_ms: 0.0,
+            max_abs_offset_ms: 0.0,
+            sum_offset_ms: 0.0,
+            audio_buffer_ms: 0.0,
+            first_window: (0.0, 0),
+            recent: [0.0; 300],
+            recent_len: 0,
+            recent_next: 0,
+        }
+    }
 }
 
 /// Continuous playback from `start_frame`.
@@ -448,6 +517,7 @@ impl Playback {
             self.stats.last_offset_ms = offset_ms;
             self.stats.sum_offset_ms += offset_ms;
             self.stats.max_abs_offset_ms = self.stats.max_abs_offset_ms.max(offset_ms.abs());
+            self.stats.record(offset_ms, clock_seconds);
         }
         if let Some(audio) = &self.audio {
             self.stats.underruns = audio.underruns();
@@ -481,6 +551,7 @@ impl Playback {
             audio_underruns = self.stats.underruns,
             mean_offset_ms = mean,
             max_abs_offset_ms = self.stats.max_abs_offset_ms,
+            drift_ms = self.stats.drift_ms(),
             "playback stopped"
         );
     }

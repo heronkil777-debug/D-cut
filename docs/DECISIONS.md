@@ -68,3 +68,14 @@ Registros em ordem cronológica. Datas em UTC.
 
 ## 2026-11-11 — Licença de fonte Ubuntu-font-1.0 no deny.toml
 - **Decisão:** `epaint` (egui) embute a fonte Ubuntu (licença Ubuntu-font-1.0) via `default_fonts`; adicionada ao allow-list para o `cargo deny` não falhar. **Revisar** compatibilidade de distribuição com AGPL (é licença de fonte, não de código); alternativa: desligar `default_fonts` e embutir uma fonte OFL.
+
+## 2026-11-11 — Composição no FFmpeg APROVADA como provisória (divergência registrada)
+- **Decisão do usuário:** composição/prévia/export via grafo FFmpeg aprovada **só como solução provisória**. É **divergência** do objetivo do briefing (§6: composição na GPU via `editor-render`/wgpu) e **não pode ser declarada definitiva** sem uma comparação medida (qualidade, desempenho na RX 6650 XT e no Vega 8, latência de scrub, viabilidade de efeitos/texto) contra a composição em wgpu.
+- **Consequência:** antes de efeitos/texto na GPU (Fases 3–4) é preciso o comparativo ou a migração para wgpu.
+
+## 2026-11-11 — AppImage: build de teste sem FFmpeg; entrega portátil final exige FFmpeg 7+ embutido
+- **Decisão do usuário:** o build portátil de teste no container (Podman rootless, sem grupo docker) pode sair sem FFmpeg. O AppImage **não é considerado finalizado** enquanto depender do FFmpeg do sistema: a entrega portátil final precisa de FFmpeg 7+ GPL próprio (x264, x265, SVT-AV1, VAAPI, sem nonfree) e licenças documentadas em THIRD_PARTY_LICENSES.
+- **Script:** `scripts/build-appimage.sh` usa Podman com `--userns=keep-id`; o Dockerfile inclui `libasound2-dev` (cpal).
+
+## 2026-11-11 — Métrica de deriva A/V
+- **Decisão:** "drift" = |média do offset vídeo−relógio nos últimos ~10 s − média nos primeiros 10 s|. O offset por frame é limitado pela quantização de 1 frame e não mede deriva. O relógio de áudio é interpolado entre callbacks (máx. 50 ms). Medido: 3,4 ms em 63,8 s (1080p30, Vega 8).

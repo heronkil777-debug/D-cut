@@ -42,8 +42,13 @@ MSG
         --file "${repo_root}/scripts/appimage/Dockerfile" \
         --tag "${image_name}" \
         "${repo_root}"
+    user_args=(--user "$(id -u):$(id -g)")
+    if [ "${container_engine}" = "podman" ]; then
+        # Rootless Podman: map the host user into the container so /workspace stays writable.
+        user_args=(--userns=keep-id "${user_args[@]}")
+    fi
     "${container_engine}" run --rm \
-        --user "$(id -u):$(id -g)" \
+        "${user_args[@]}" \
         --env HOME=/tmp \
         --env CARGO_HOME=/workspace/build/cargo-home \
         --env CARGO_TARGET_DIR=/workspace/build/target-container \

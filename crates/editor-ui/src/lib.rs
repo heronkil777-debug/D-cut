@@ -1492,6 +1492,7 @@ impl DcutApp {
                 "A/V offset {:.1} ms (média {mean:.1}, |máx| {:.1})",
                 stats.last_offset_ms, stats.max_abs_offset_ms
             ));
+            lines.push(format!("deriva A/V {:.2} ms", stats.drift_ms()));
             lines.push(format!(
                 "áudio buffer {:.0} ms · underruns {}",
                 stats.audio_buffer_ms, stats.underruns
