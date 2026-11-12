@@ -1,0 +1,1 @@
+{"id": "scanlines", "name": "Linhas de TV", "category": "stylize", "params": [{"id": "intensity", "name": "Intensidade", "min": 0, "max": 1, "default": 0.4}, {"id": "spacing", "name": "Espaçamento (px)", "min": 2, "max": 12, "default": 3}], "golden_params": [0.6, 3]}

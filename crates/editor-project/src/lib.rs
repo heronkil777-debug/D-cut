@@ -12,6 +12,7 @@ use std::{
 use editor_core::{CoreError, Project};
 use thiserror::Error;
 
+pub mod autosave;
 pub mod subtitles;
 pub use subtitles::{SubtitleImportError, parse_srt};
 

@@ -6,7 +6,9 @@
 mod assets;
 mod export;
 mod files;
+mod i18n;
 mod playback;
+mod settings;
 mod speech;
 mod strings;
 
@@ -40,6 +42,7 @@ use crate::{
     assets::AssetCache,
     export::{ExportJob, ExportSettings, JobState, Profile},
     files::{FileDialog, Outcome, Purpose},
+    i18n::tr,
     playback::{FrameKey, Playback},
 };
 
@@ -363,6 +366,12 @@ struct DcutApp {
     preview_side: Option<PreviewFrame>,
     proxies: assets::ProxyQueue,
     use_proxies: bool,
+    settings: settings::Settings,
+    last_autosave: Instant,
+    autosaved_generation: u64,
+    recoverable: Vec<editor_project::autosave::Recoverable>,
+    show_shortcuts: bool,
+    update_result: Option<Arc<std::sync::Mutex<Option<Result<Option<String>, String>>>>>,
 }
 
 impl DcutApp {
@@ -445,7 +454,20 @@ impl DcutApp {
             preview_side: None,
             proxies: assets::ProxyQueue::new(context.egui_ctx.clone()),
             use_proxies: std::env::var_os("D_CUT_NO_PROXIES").is_none(),
+            settings: {
+                let settings = settings::Settings::load();
+                i18n::set_language(&settings.language);
+                settings
+            },
+            last_autosave: Instant::now(),
+            autosaved_generation: 0,
+            recoverable: editor_project::autosave::find_recoverable(),
+            show_shortcuts: false,
+            update_result: None,
         };
+        if app.settings.check_updates {
+            app.start_update_check();
+        }
         app.hud.visible = std::env::var_os("D_CUT_HUD").is_some();
         app.quality = match std::env::var("D_CUT_PREVIEW").as_deref() {
             Ok("high") => PreviewQuality::High,
@@ -523,9 +545,9 @@ impl DcutApp {
         match self.history.undo(&mut self.project) {
             Ok(true) => {
                 self.changed();
-                self.status = "Desfeito".into();
+                self.status = tr("Desfeito").into();
             }
-            Ok(false) => self.status = "Nada para desfazer".into(),
+            Ok(false) => self.status = tr("Nada para desfazer").into(),
             Err(error) => self.status = format!("Falha ao desfazer: {error}"),
         }
     }
@@ -534,9 +556,9 @@ impl DcutApp {
         match self.history.redo(&mut self.project) {
             Ok(true) => {
                 self.changed();
-                self.status = "Refeito".into();
+                self.status = tr("Refeito").into();
             }
-            Ok(false) => self.status = "Nada para refazer".into(),
+            Ok(false) => self.status = tr("Nada para refazer").into(),
             Err(error) => self.status = format!("Falha ao refazer: {error}"),
         }
     }
@@ -547,7 +569,7 @@ impl DcutApp {
             None => clips_at_frame(&self.project, self.playhead),
         };
         if targets.is_empty() {
-            self.status = "Posicione o playhead sobre um clipe para dividir".into();
+            self.status = tr("Posicione o playhead sobre um clipe para dividir").into();
             return;
         }
         let command = split_at_command(&self.project, &targets, self.playhead);
@@ -561,7 +583,7 @@ impl DcutApp {
             return;
         }
         let Some(clip) = self.selected_clip else {
-            self.status = "Selecione um clipe para excluir".into();
+            self.status = tr("Selecione um clipe para excluir").into();
             return;
         };
         let command = delete_clips_command(&self.project, &[clip], ripple);
@@ -753,7 +775,7 @@ impl DcutApp {
         if let Err(error) = spawned {
             self.status = format!("Falha ao iniciar leitura de mídia: {error}");
         } else {
-            self.status = "Lendo mídia…".into();
+            self.status = tr("Lendo mídia…").into();
         }
     }
 
@@ -882,6 +904,7 @@ impl DcutApp {
                 }
                 self.project_path = Some(path);
                 self.dirty = false;
+                editor_project::autosave::clear_autosave();
                 true
             }
             Err(error) => {
@@ -972,7 +995,7 @@ impl DcutApp {
         self.scroll_px = 0.0;
         self.generation += 1;
         self.dirty = false;
-        self.status = "Novo projeto".into();
+        self.status = tr("Novo projeto").into();
     }
 
     fn request_action(&mut self, action: PendingAction) {
@@ -1087,12 +1110,12 @@ impl DcutApp {
     fn toggle_playback(&mut self, ctx: &egui::Context) {
         if self.playback.is_some() {
             self.stop_playback();
-            self.status = "Pausado".into();
+            self.status = tr("Pausado").into();
             return;
         }
         let duration = self.project.duration_frames();
         if duration == 0 {
-            self.status = "A timeline está vazia".into();
+            self.status = tr("A timeline está vazia").into();
             return;
         }
         if self.playhead + 1 >= duration {
@@ -1183,7 +1206,7 @@ impl DcutApp {
             }
             if tick.finished {
                 self.stop_playback();
-                self.status = "Fim da timeline".into();
+                self.status = tr("Fim da timeline").into();
             } else {
                 ctx.request_repaint();
             }
@@ -1340,7 +1363,7 @@ impl DcutApp {
         ui.separator();
         // Speed (applied to the clip and its linked partner so audio stays in sync).
         let mut speed_choice = None;
-        egui::ComboBox::from_label("Velocidade")
+        egui::ComboBox::from_label(tr("Velocidade"))
             .selected_text(format!("{:.2}×", clip.speed))
             .show_ui(ui, |ui| {
                 for speed in [0.25_f32, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0] {
@@ -1373,7 +1396,7 @@ impl DcutApp {
                     || "nenhuma".to_owned(),
                     |package| package.manifest.name.clone(),
                 );
-            egui::ComboBox::from_label("Transição de entrada")
+            egui::ComboBox::from_label(tr("Transição de entrada"))
                 .selected_text(label)
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(current.is_none(), "nenhuma").clicked() {
@@ -1392,7 +1415,7 @@ impl DcutApp {
             if let Some(transition) = &clip.transition_in {
                 let mut seconds = transition.duration_frames as f64 / fps;
                 let response =
-                    ui.add(egui::Slider::new(&mut seconds, 0.1..=3.0).text("Duração (s)"));
+                    ui.add(egui::Slider::new(&mut seconds, 0.1..=3.0).text(tr("Duração (s)")));
                 if response.drag_stopped() || (response.changed() && !response.dragged()) {
                     let frames = ((seconds * fps).round() as u64).max(2);
                     let package = transition.package.clone();
@@ -1406,7 +1429,9 @@ impl DcutApp {
                     self.run_edit(command, "Duração da transição ajustada");
                     return;
                 }
-                ui.small("Precisa de um clipe imediatamente antes, na mesma faixa.");
+                ui.small(tr(
+                    "Precisa de um clipe imediatamente antes, na mesma faixa.",
+                ));
             }
             if let Some(choice) = choice {
                 let frames = clip
@@ -1429,17 +1454,17 @@ impl DcutApp {
             let mut fade_out = audio.fade_out_frames as f64 / fps;
             let mut commit = false;
             let gain =
-                ui.add(egui::Slider::new(&mut audio.gain_db, -40.0..=12.0).text("Volume (dB)"));
+                ui.add(egui::Slider::new(&mut audio.gain_db, -40.0..=12.0).text(tr("Volume (dB)")));
             commit |= gain.drag_stopped() || (gain.changed() && !gain.dragged());
             ui.horizontal(|ui| {
-                ui.label("Fade in (s)");
+                ui.label(tr("Fade in (s)"));
                 let response = ui.add(
                     egui::DragValue::new(&mut fade_in)
                         .speed(0.05)
                         .range(0.0..=10.0),
                 );
                 commit |= response.drag_stopped() || response.lost_focus();
-                ui.label("out");
+                ui.label(tr("out"));
                 let response = ui.add(
                     egui::DragValue::new(&mut fade_out)
                         .speed(0.05)
@@ -1447,7 +1472,9 @@ impl DcutApp {
                 );
                 commit |= response.drag_stopped() || response.lost_focus();
             });
-            commit |= ui.checkbox(&mut audio.denoise, "Reduzir ruído").changed();
+            commit |= ui
+                .checkbox(&mut audio.denoise, tr("Reduzir ruído"))
+                .changed();
             if commit {
                 audio.fade_in_frames = (fade_in * fps).round() as u64;
                 audio.fade_out_frames = (fade_out * fps).round() as u64;
@@ -1470,10 +1497,10 @@ impl DcutApp {
             .effects
             .clone();
         ui.separator();
-        ui.strong("Efeitos (GPU)");
+        ui.strong(tr("Efeitos (GPU)"));
         let mut add = None;
         egui::ComboBox::from_id_salt("add-effect")
-            .selected_text("+ Adicionar efeito")
+            .selected_text(tr("+ Adicionar efeito"))
             .show_ui(ui, |ui| {
                 for package in self.catalog.effects() {
                     let label = format!(
@@ -1513,7 +1540,7 @@ impl DcutApp {
             };
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(&package.manifest.name).strong());
-                if ui.small_button("remover").clicked() {
+                if ui.small_button(tr("remover")).clicked() {
                     remove = Some(index);
                 }
             });
@@ -1539,12 +1566,12 @@ impl DcutApp {
                         let key_label = if animated { "◆ chave" } else { "◇ chave" };
                         if ui
                             .small_button(key_label)
-                            .on_hover_text("Grava uma chave no playhead (animação)")
+                            .on_hover_text(tr("Grava uma chave no playhead (animação)"))
                             .clicked()
                         {
                             key_request = Some((index, param_index, value));
                         }
-                        if animated && ui.small_button("limpar").clicked() {
+                        if animated && ui.small_button(tr("limpar")).clicked() {
                             clear_request = Some((index, param_index));
                         }
                         response
@@ -1615,49 +1642,74 @@ impl DcutApp {
             ui.horizontal_wrapped(|ui| {
                 ui.strong(egui::RichText::new(PRODUCT_NAME).color(TEAL));
                 ui.separator();
-                if ui.button(strings::NEW_PROJECT).clicked() {
+                if ui.button(tr(strings::NEW_PROJECT)).clicked() {
                     self.request_action(PendingAction::New);
                 }
-                if ui.button(strings::OPEN).on_hover_text("Ctrl+O").clicked() {
+                if ui
+                    .button(tr(strings::OPEN))
+                    .on_hover_text(tr("Ctrl+O"))
+                    .clicked()
+                {
                     self.request_action(PendingAction::Open);
                 }
-                if ui.button(strings::SAVE).on_hover_text("Ctrl+S").clicked() {
+                if ui
+                    .button(tr(strings::SAVE))
+                    .on_hover_text(tr("Ctrl+S"))
+                    .clicked()
+                {
                     self.save();
                 }
-                if ui.button(strings::SAVE_AS).clicked() {
+                if ui.button(tr(strings::SAVE_AS)).clicked() {
                     self.open_dialog(Purpose::SaveProject);
                 }
                 ui.separator();
-                if ui.button(strings::IMPORT).on_hover_text("Ctrl+I").clicked() {
+                if ui
+                    .button(tr(strings::IMPORT))
+                    .on_hover_text(tr("Ctrl+I"))
+                    .clicked()
+                {
                     self.open_dialog(Purpose::ImportMedia);
+                }
+                if ui
+                    .button(tr("?"))
+                    .on_hover_text(tr("Atalhos (F1)"))
+                    .clicked()
+                {
+                    self.show_shortcuts = true;
                 }
                 ui.separator();
                 if ui
-                    .add_enabled(self.history.can_undo(), egui::Button::new(strings::UNDO))
-                    .on_hover_text("Ctrl+Z")
+                    .add_enabled(
+                        self.history.can_undo(),
+                        egui::Button::new(tr(strings::UNDO)),
+                    )
+                    .on_hover_text(tr("Ctrl+Z"))
                     .clicked()
                 {
                     self.undo();
                 }
                 if ui
-                    .add_enabled(self.history.can_redo(), egui::Button::new(strings::REDO))
-                    .on_hover_text("Ctrl+Shift+Z / Ctrl+Y")
+                    .add_enabled(
+                        self.history.can_redo(),
+                        egui::Button::new(tr(strings::REDO)),
+                    )
+                    .on_hover_text(tr("Ctrl+Shift+Z / Ctrl+Y"))
                     .clicked()
                 {
                     self.redo();
                 }
                 ui.separator();
-                ui.toggle_value(&mut self.show_library, "Mídia");
-                ui.toggle_value(&mut self.show_inspector, "Propriedades");
+                ui.toggle_value(&mut self.show_library, tr("Mídia"));
+                ui.toggle_value(&mut self.show_inspector, tr("Propriedades"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.weak(format!("v{}", env!("CARGO_PKG_VERSION")));
                     let export_button = egui::Button::new(
-                        egui::RichText::new(strings::EXPORT).color(egui::Color32::WHITE),
+                        egui::RichText::new(tr(strings::EXPORT)).color(egui::Color32::WHITE),
                     )
                     .fill(ACCENT);
                     if ui
                         .add_enabled(self.project.duration_frames() > 0, export_button)
-                        .on_hover_text("Ctrl+E")
+                        .on_hover_text(tr("Ctrl+E"))
                         .clicked()
                     {
                         self.open_export();
@@ -1669,7 +1721,7 @@ impl DcutApp {
 
     fn open_export(&mut self) {
         if self.project.duration_frames() == 0 {
-            self.status = "Nada para exportar: a timeline está vazia".into();
+            self.status = tr("Nada para exportar: a timeline está vazia").into();
             return;
         }
         if self.export_settings.is_none() {
@@ -1700,17 +1752,17 @@ impl DcutApp {
             .min_size(170.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading(strings::MEDIA_LIBRARY);
+                    ui.heading(tr(strings::MEDIA_LIBRARY));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(strings::IMPORT).clicked() {
+                        if ui.button(tr(strings::IMPORT)).clicked() {
                             self.open_dialog(Purpose::ImportMedia);
                         }
                     });
                 });
                 ui.separator();
                 if self.project.media.is_empty() {
-                    ui.label(strings::NO_MEDIA);
-                    ui.small(strings::NO_MEDIA_HINT);
+                    ui.label(tr(strings::NO_MEDIA));
+                    ui.small(tr(strings::NO_MEDIA_HINT));
                     if !self.pending_probes.is_empty() {
                         ui.spinner();
                     }
@@ -1782,7 +1834,7 @@ impl DcutApp {
                             if response.double_clicked() {
                                 add = Some(asset.id);
                             }
-                            response.on_hover_text("Clique duplo: adicionar à timeline");
+                            response.on_hover_text(tr("Clique duplo: adicionar à timeline"));
                             ui.add_space(3.0);
                         }
                     });
@@ -1793,7 +1845,7 @@ impl DcutApp {
                 if ui
                     .add_enabled(
                         self.selected_media.is_some(),
-                        egui::Button::new(strings::ADD_TO_TIMELINE),
+                        egui::Button::new(tr(strings::ADD_TO_TIMELINE)),
                     )
                     .clicked()
                     && let Some(media_id) = self.selected_media
@@ -1801,7 +1853,7 @@ impl DcutApp {
                     self.add_to_timeline(media_id);
                 }
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    ui.small(strings::LOCAL_ONLY);
+                    ui.small(tr(strings::LOCAL_ONLY));
                 });
             });
     }
@@ -1813,7 +1865,7 @@ impl DcutApp {
             .min_size(190.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.heading(strings::INSPECTOR);
+                    ui.heading(tr(strings::INSPECTOR));
                     ui.separator();
                     if self.selected_text.is_some() {
                         self.text_inspector(ui);
@@ -1823,7 +1875,7 @@ impl DcutApp {
                     ui.separator();
                     self.format_inspector(ui);
                     ui.separator();
-                    ui.label(strings::PREVIEW_QUALITY);
+                    ui.label(tr(strings::PREVIEW_QUALITY));
                     ui.horizontal(|ui| {
                         for quality in [
                             PreviewQuality::High,
@@ -1842,10 +1894,10 @@ impl DcutApp {
                     let (width, height) = self.preview_size();
                     ui.small(format!("Prévia em {width}×{height}"));
                     ui.separator();
-                                        ui.checkbox(&mut self.snapping, "Ímã (snap) na timeline");
+                                        ui.checkbox(&mut self.snapping, tr("Ímã (snap) na timeline"));
                     if ui
-                        .checkbox(&mut self.use_proxies, "Usar proxies na prévia (540p)")
-                        .on_hover_text("Cópias leves geradas em segundo plano; o export usa sempre os originais")
+                        .checkbox(&mut self.use_proxies, tr("Usar proxies na prévia (540p)"))
+                        .on_hover_text(tr("Cópias leves geradas em segundo plano; o export usa sempre os originais"))
                         .changed()
                     {
                         self.stop_playback();
@@ -1863,22 +1915,52 @@ impl DcutApp {
                             }
                         }
                     }
+                                        ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Idioma / Language"));
+                        for (code, label) in [("pt", "PT-BR"), ("en", "EN")] {
+                            if ui.selectable_label(self.settings.language == code, label).clicked() {
+                                self.settings.language = code.to_owned();
+                                self.settings.save();
+                                i18n::set_language(code);
+                            }
+                        }
+                    });
+                    if ui
+                        .checkbox(&mut self.settings.check_updates, tr("Verificar atualizações (usa a internet)"))
+                        .changed()
+                    {
+                        self.settings.save();
+                        if self.settings.check_updates {
+                            self.start_update_check();
+                        }
+                    }
+                    if let Some(slot) = &self.update_result
+                        && let Ok(guard) = slot.lock()
+                        && let Some(result) = guard.as_ref()
+                    {
+                        match result {
+                            Ok(Some(tag)) => ui.colored_label(TEAL, format!("Nova versão disponível: {tag}")),
+                            Ok(None) => ui.small(tr("Você está na versão mais recente.")),
+                            Err(error) => ui.small(format!("Checagem falhou: {error}")),
+                        };
+                    }
                     if !self.proxies.pending.is_empty() {
                         ui.small(format!("Gerando {} proxy(s)…", self.proxies.pending.len()));
                     }
                     ui.add_space(6.0);
-                    ui.small(strings::SHORTCUTS);
+                    ui.small(tr(strings::SHORTCUTS));
                 });
             });
     }
 
     fn clip_inspector(&mut self, ui: &mut egui::Ui) {
         let Some(clip_id) = self.selected_clip else {
-            ui.weak(strings::NOTHING_SELECTED);
+            ui.weak(tr(strings::NOTHING_SELECTED));
             return;
         };
         let Some((track_index, clip_index)) = find_clip(&self.project, clip_id) else {
-            ui.weak(strings::NOTHING_SELECTED);
+            ui.weak(tr(strings::NOTHING_SELECTED));
             return;
         };
         let track = &self.project.tracks[track_index];
@@ -1891,15 +1973,15 @@ impl DcutApp {
         ui.strong(format!("Clipe em {}", track.name));
         ui.label(name);
         egui::Grid::new("clip-grid").num_columns(2).show(ui, |ui| {
-            ui.label("Início");
+            ui.label(tr("Início"));
             ui.label(format_time(
                 format.frames_to_seconds(clip.timeline_start_frame),
             ));
             ui.end_row();
-            ui.label("Duração");
+            ui.label(tr("Duração"));
             ui.label(format_time(format.frames_to_seconds(clip.duration_frames)));
             ui.end_row();
-            ui.label("Trecho da fonte");
+            ui.label(tr("Trecho da fonte"));
             ui.label(format!(
                 "{} – {}",
                 format_time(format.frames_to_seconds(clip.source_start_frame)),
@@ -1911,23 +1993,31 @@ impl DcutApp {
         });
         let linked = linked_clip_ids(&self.project, clip_id).len() > 1;
         if linked {
-            ui.small("Vídeo e áudio vinculados");
+            ui.small(tr("Vídeo e áudio vinculados"));
         }
         ui.horizontal_wrapped(|ui| {
-            if ui.button(strings::SPLIT).on_hover_text("S").clicked() {
+            if ui
+                .button(tr(strings::SPLIT))
+                .on_hover_text(tr("S"))
+                .clicked()
+            {
                 self.split();
             }
-            if ui.button(strings::DELETE).on_hover_text("Delete").clicked() {
+            if ui
+                .button(tr(strings::DELETE))
+                .on_hover_text(tr("Delete"))
+                .clicked()
+            {
                 self.delete(false);
             }
             if ui
-                .button(strings::RIPPLE_DELETE)
-                .on_hover_text("Shift+Delete")
+                .button(tr(strings::RIPPLE_DELETE))
+                .on_hover_text(tr("Shift+Delete"))
                 .clicked()
             {
                 self.delete(true);
             }
-            if linked && ui.button(strings::UNLINK).clicked() {
+            if linked && ui.button(tr(strings::UNLINK)).clicked() {
                 self.unlink();
             }
         });
@@ -1942,7 +2032,7 @@ impl DcutApp {
             .collect();
         if !others.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                ui.label("Mover para:");
+                ui.label(tr("Mover para:"));
                 for (track_id, name) in others {
                     if ui.button(name).clicked() {
                         let command = move_clip_to_track_command(&self.project, clip_id, track_id);
@@ -1957,24 +2047,24 @@ impl DcutApp {
 
     fn text_inspector(&mut self, ui: &mut egui::Ui) {
         let Some(draft) = &mut self.text_draft else {
-            ui.weak(strings::NOTHING_SELECTED);
+            ui.weak(tr(strings::NOTHING_SELECTED));
             return;
         };
-        ui.strong("Texto");
+        ui.strong(tr("Texto"));
         ui.add(
             egui::TextEdit::multiline(&mut draft.text)
                 .desired_rows(2)
                 .desired_width(f32::INFINITY),
         );
-        ui.add(egui::Slider::new(&mut draft.font_size, 8.0..=400.0).text("Tamanho"));
-        ui.add(egui::Slider::new(&mut draft.y, 0.0..=1.0).text("Altura (0 topo)"));
-        ui.add(egui::Slider::new(&mut draft.x, 0.0..=1.0).text("Horizontal"));
+        ui.add(egui::Slider::new(&mut draft.font_size, 8.0..=400.0).text(tr("Tamanho")));
+        ui.add(egui::Slider::new(&mut draft.y, 0.0..=1.0).text(tr("Altura (0 topo)")));
+        ui.add(egui::Slider::new(&mut draft.x, 0.0..=1.0).text(tr("Horizontal")));
         ui.horizontal(|ui| {
-            ui.label("Cor");
+            ui.label(tr("Cor"));
             ui.color_edit_button_rgba_unmultiplied(&mut draft.color);
         });
         ui.horizontal(|ui| {
-            ui.label("Início (s)");
+            ui.label(tr("Início (s)"));
             ui.add(
                 egui::DragValue::new(&mut draft.start_seconds)
                     .speed(0.05)
@@ -1982,7 +2072,7 @@ impl DcutApp {
             );
         });
         ui.horizontal(|ui| {
-            ui.label("Duração (s)");
+            ui.label(tr("Duração (s)"));
             ui.add(
                 egui::DragValue::new(&mut draft.duration_seconds)
                     .speed(0.05)
@@ -1991,18 +2081,20 @@ impl DcutApp {
         });
         let id = draft.id;
         ui.horizontal(|ui| {
-            if ui.button("Aplicar").clicked() {
+            if ui.button(tr("Aplicar")).clicked() {
                 self.apply_text_draft();
             }
-            if ui.button(strings::DELETE).clicked() {
+            if ui.button(tr(strings::DELETE)).clicked() {
                 self.delete_text(id);
             }
         });
-        ui.small("Texto e legendas são compostos na GPU (mesmo shader da prévia e do export).");
+        ui.small(tr(
+            "Texto e legendas são compostos na GPU (mesmo shader da prévia e do export).",
+        ));
     }
 
     fn format_inspector(&mut self, ui: &mut egui::Ui) {
-        ui.label(strings::PROJECT_FORMAT);
+        ui.label(tr(strings::PROJECT_FORMAT));
         let format = self.project.format;
         let ratios: [(&str, u32, u32); 4] = [
             ("16:9", 16, 9),
@@ -2016,7 +2108,7 @@ impl DcutApp {
             .map_or("personalizado", |(label, _, _)| label);
         let long = format.width.max(format.height);
         let mut new_format = None;
-        egui::ComboBox::from_label("Proporção")
+        egui::ComboBox::from_label(tr("Proporção"))
             .selected_text(current_ratio)
             .show_ui(ui, |ui| {
                 for (label, w, h) in ratios {
@@ -2035,7 +2127,7 @@ impl DcutApp {
             .iter()
             .find(|(_, side)| *side == long)
             .map_or("personalizada", |(label, _)| label);
-        egui::ComboBox::from_label("Resolução")
+        egui::ComboBox::from_label(tr("Resolução"))
             .selected_text(current_res)
             .show_ui(ui, |ui| {
                 for (label, side) in resolutions {
@@ -2068,7 +2160,7 @@ impl DcutApp {
         // Clip positions are stored in frames, so the frame rate is fixed once media exists.
         let can_change_rate = self.project.media.is_empty();
         ui.add_enabled_ui(can_change_rate, |ui| {
-            egui::ComboBox::from_label("FPS")
+            egui::ComboBox::from_label(tr("FPS"))
                 .selected_text(current_rate)
                 .show_ui(ui, |ui| {
                     for (label, numerator, denominator) in rates {
@@ -2083,7 +2175,7 @@ impl DcutApp {
                 });
         })
         .response
-        .on_disabled_hover_text("O FPS só pode mudar antes de importar mídia");
+        .on_disabled_hover_text(tr("O FPS só pode mudar antes de importar mídia"));
         ui.small(format!(
             "{} × {} · {:.3} fps",
             format.width,
@@ -2116,7 +2208,7 @@ impl DcutApp {
                         painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            strings::PREVIEW_EMPTY,
+                            tr(strings::PREVIEW_EMPTY),
                             egui::FontId::proportional(15.0),
                             egui::Color32::GRAY,
                         );
@@ -2133,7 +2225,7 @@ impl DcutApp {
                         painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            strings::RENDERER_MISSING,
+                            tr(strings::RENDERER_MISSING),
                             egui::FontId::proportional(15.0),
                             egui::Color32::LIGHT_RED,
                         );
@@ -2145,12 +2237,12 @@ impl DcutApp {
                         let fps = self.fps();
                         let duration = self.project.duration_frames();
                         ui.add_space((ui.available_width() / 2.0 - 150.0).max(0.0));
-                        if ui.button("Início").on_hover_text("Home").clicked() {
+                        if ui.button(tr("Início")).on_hover_text(tr("Home")).clicked() {
                             self.seek(0);
                         }
                         if ui
-                            .button("< Frame")
-                            .on_hover_text("Seta esquerda")
+                            .button(tr("< Frame"))
+                            .on_hover_text(tr("Seta esquerda"))
                             .clicked()
                         {
                             self.seek(self.playhead.saturating_sub(1));
@@ -2162,15 +2254,19 @@ impl DcutApp {
                         };
                         if ui
                             .add(egui::Button::new(egui::RichText::new(play_label).strong()))
-                            .on_hover_text("Play/Pause (Espaço)")
+                            .on_hover_text(tr("Play/Pause (Espaço)"))
                             .clicked()
                         {
                             self.toggle_playback(ui.ctx());
                         }
-                        if ui.button("Frame >").on_hover_text("Seta direita").clicked() {
+                        if ui
+                            .button(tr("Frame >"))
+                            .on_hover_text(tr("Seta direita"))
+                            .clicked()
+                        {
                             self.seek(self.playhead + 1);
                         }
-                        if ui.button("Fim").on_hover_text("End").clicked() {
+                        if ui.button(tr("Fim")).on_hover_text(tr("End")).clicked() {
                             self.seek(duration);
                         }
                         ui.monospace(format!(
@@ -2265,15 +2361,19 @@ impl DcutApp {
                         self.toggle_playback(ui.ctx());
                     }
                     ui.separator();
-                    if ui.button(strings::SPLIT).on_hover_text("S").clicked() {
+                    if ui
+                        .button(tr(strings::SPLIT))
+                        .on_hover_text(tr("S"))
+                        .clicked()
+                    {
                         self.split();
                     }
                     if ui
                         .add_enabled(
                             self.selected_clip.is_some(),
-                            egui::Button::new(strings::DELETE),
+                            egui::Button::new(tr(strings::DELETE)),
                         )
-                        .on_hover_text("Delete")
+                        .on_hover_text(tr("Delete"))
                         .clicked()
                     {
                         self.delete(false);
@@ -2281,64 +2381,64 @@ impl DcutApp {
                     if ui
                         .add_enabled(
                             self.selected_clip.is_some(),
-                            egui::Button::new(strings::RIPPLE_DELETE),
+                            egui::Button::new(tr(strings::RIPPLE_DELETE)),
                         )
-                        .on_hover_text("Shift+Delete")
+                        .on_hover_text(tr("Shift+Delete"))
                         .clicked()
                     {
                         self.delete(true);
                     }
                     ui.separator();
                     if ui
-                        .button(" - ")
-                        .on_hover_text("Diminuir zoom (Ctrl+roda / -)")
+                        .button(tr(" - "))
+                        .on_hover_text(tr("Diminuir zoom (Ctrl+roda / -)"))
                         .clicked()
                     {
                         self.pixels_per_second = (self.pixels_per_second / 1.25).max(2.0);
                     }
                     if ui
-                        .button(" + ")
-                        .on_hover_text("Aumentar zoom (Ctrl+roda / +)")
+                        .button(tr(" + "))
+                        .on_hover_text(tr("Aumentar zoom (Ctrl+roda / +)"))
                         .clicked()
                     {
                         self.pixels_per_second = (self.pixels_per_second * 1.25).min(1200.0);
                     }
                     if ui
-                        .button("Ajustar")
-                        .on_hover_text("Mostrar a timeline inteira")
+                        .button(tr("Ajustar"))
+                        .on_hover_text(tr("Mostrar a timeline inteira"))
                         .clicked()
                     {
                         self.fit_timeline(ui.available_width());
                     }
                     ui.separator();
                     if ui
-                        .button("+ Texto")
-                        .on_hover_text("Título no playhead (T)")
+                        .button(tr("+ Texto"))
+                        .on_hover_text(tr("Título no playhead (T)"))
                         .clicked()
                     {
                         self.add_text();
                     }
-                    if ui.button("Legendas .srt…").clicked() {
+                    if ui.button(tr("Legendas .srt…")).clicked() {
                         self.open_dialog(Purpose::ImportSubtitles);
                     }
                     if ui
-                        .button("Legendas automáticas…")
-                        .on_hover_text("Whisper local, offline")
+                        .button(tr("Legendas automáticas…"))
+                        .on_hover_text(tr("Whisper local, offline"))
                         .clicked()
                     {
                         self.speech_open = true;
                     }
                     if ui
-                        .button("+ Faixa V")
-                        .on_hover_text("Nova faixa de vídeo (por cima)")
+                        .button(tr("+ Faixa V"))
+                        .on_hover_text(tr("Nova faixa de vídeo (por cima)"))
                         .clicked()
                     {
                         let command = add_track_command(&self.project, TrackKind::Video);
                         self.run_edit(Ok(command), "Faixa de vídeo adicionada");
                     }
                     if ui
-                        .button("+ Faixa A")
-                        .on_hover_text("Nova faixa de áudio")
+                        .button(tr("+ Faixa A"))
+                        .on_hover_text(tr("Nova faixa de áudio"))
                         .clicked()
                     {
                         let command = add_track_command(&self.project, TrackKind::Audio);
@@ -2500,7 +2600,7 @@ impl DcutApp {
                 painter.text(
                     lane.left_center() + egui::vec2(10.0, 0.0),
                     egui::Align2::LEFT_CENTER,
-                    strings::TIMELINE_EMPTY_HINT,
+                    tr(strings::TIMELINE_EMPTY_HINT),
                     egui::FontId::proportional(12.0),
                     egui::Color32::GRAY,
                 );
@@ -2937,7 +3037,7 @@ impl DcutApp {
         let running = matches!(job_state, Some(JobState::Running { .. }));
         let format = self.project.format;
         let duration = format.frames_to_seconds(self.project.duration_frames());
-        egui::Window::new(strings::EXPORT_TITLE)
+        egui::Window::new(tr(strings::EXPORT_TITLE))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
@@ -2945,11 +3045,11 @@ impl DcutApp {
             .show(ctx, |ui| {
                 ui.add_enabled_ui(!running, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Arquivo:");
+                        ui.label(tr("Arquivo:"));
                         ui.add(
                             egui::TextEdit::singleline(&mut settings.output).desired_width(300.0),
                         );
-                        if ui.button(strings::CHOOSE).clicked() {
+                        if ui.button(tr(strings::CHOOSE)).clicked() {
                             choose = true;
                         }
                     });
@@ -2964,15 +3064,15 @@ impl DcutApp {
                     ui.radio_value(
                         &mut settings.profile,
                         Profile::Quality,
-                        strings::EXPORT_QUALITY,
+                        tr(strings::EXPORT_QUALITY),
                     );
                     if settings.profile == Profile::Quality {
                         ui.indent("quality", |ui| {
                             ui.add(
                                 egui::Slider::new(&mut settings.crf, 14..=32)
-                                    .text("CRF (menor = melhor)"),
+                                    .text(tr("CRF (menor = melhor)")),
                             );
-                            egui::ComboBox::from_label("Preset")
+                            egui::ComboBox::from_label(tr("Preset"))
                                 .selected_text(settings.preset)
                                 .show_ui(ui, |ui| {
                                     for preset in ["veryfast", "faster", "fast", "medium", "slow"] {
@@ -2982,7 +3082,11 @@ impl DcutApp {
                         });
                     }
                     ui.add_enabled_ui(settings.vaapi_available, |ui| {
-                        ui.radio_value(&mut settings.profile, Profile::Fast, strings::EXPORT_FAST);
+                        ui.radio_value(
+                            &mut settings.profile,
+                            Profile::Fast,
+                            tr(strings::EXPORT_FAST),
+                        );
                     })
                     .response
                     .on_disabled_hover_text(format!("{} não encontrado", export::VAAPI_DEVICE));
@@ -2990,7 +3094,7 @@ impl DcutApp {
                         ui.indent("fast", |ui| {
                             ui.add(
                                 egui::Slider::new(&mut settings.qp, 14..=36)
-                                    .text("QP (menor = melhor)"),
+                                    .text(tr("QP (menor = melhor)")),
                             );
                         });
                     }
@@ -3003,12 +3107,12 @@ impl DcutApp {
                                 .show_percentage()
                                 .animate(true),
                         );
-                        if ui.button(strings::CANCEL).clicked() {
+                        if ui.button(tr(strings::CANCEL)).clicked() {
                             cancel = true;
                         }
                     }
                     Some(JobState::Done { summary }) => {
-                        ui.colored_label(TEAL, "Exportado e conferido com ffprobe:");
+                        ui.colored_label(TEAL, tr("Exportado e conferido com ffprobe:"));
                         ui.label(summary);
                         if let Some(job) = &self.export_job {
                             ui.small(format!(
@@ -3019,7 +3123,7 @@ impl DcutApp {
                         }
                     }
                     Some(JobState::Failed { error }) => {
-                        ui.colored_label(egui::Color32::LIGHT_RED, "Falha no export:");
+                        ui.colored_label(egui::Color32::LIGHT_RED, tr("Falha no export:"));
                         egui::ScrollArea::vertical()
                             .max_height(120.0)
                             .show(ui, |ui| {
@@ -3031,12 +3135,12 @@ impl DcutApp {
                 ui.horizontal(|ui| {
                     if !running
                         && ui
-                            .add(egui::Button::new(strings::EXPORT_START).fill(ACCENT))
+                            .add(egui::Button::new(tr(strings::EXPORT_START)).fill(ACCENT))
                             .clicked()
                     {
                         start = true;
                     }
-                    if !running && ui.button(strings::CLOSE).clicked() {
+                    if !running && ui.button(tr(strings::CLOSE)).clicked() {
                         close = true;
                     }
                 });
@@ -3063,7 +3167,7 @@ impl DcutApp {
         let encoder = settings.encoder();
         let mut output = PathBuf::from(settings.output.trim());
         if output.as_os_str().is_empty() {
-            self.status = "Escolha o arquivo de saída".into();
+            self.status = tr("Escolha o arquivo de saída").into();
             return;
         }
         if output.extension().is_none() {
@@ -3085,7 +3189,7 @@ impl DcutApp {
             self.gpu.clone(),
             output,
         ));
-        self.status = "Exportando…".into();
+        self.status = tr("Exportando…").into();
     }
 
     fn speech_window(&mut self, ctx: &egui::Context) {
@@ -3100,7 +3204,7 @@ impl DcutApp {
         );
         let mut open = true;
         let mut action = None;
-        egui::Window::new("Legendas automáticas (PT-BR, offline)")
+        egui::Window::new(tr("Legendas automáticas (PT-BR, offline)"))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
@@ -3108,8 +3212,8 @@ impl DcutApp {
             .show(ctx, |ui| {
                 ui.label(format!("Modelo: {} · licença {}", model.name, model.license));
                 if editor_speech::model_ready(&model) {
-                    ui.colored_label(TEAL, "Modelo instalado e verificado.");
-                    if ui.add_enabled(!busy, egui::Button::new("Transcrever a timeline").fill(ACCENT)).clicked() {
+                    ui.colored_label(TEAL, tr("Modelo instalado e verificado."));
+                    if ui.add_enabled(!busy, egui::Button::new(tr("Transcrever a timeline")).fill(ACCENT)).clicked() {
                         action = Some(1);
                     }
                 } else {
@@ -3118,21 +3222,21 @@ impl DcutApp {
                         model.bytes as f64 / 1e6,
                         editor_speech::models_dir().display()
                     ));
-                    if ui.add_enabled(!busy, egui::Button::new("Baixar modelo")).clicked() {
+                    if ui.add_enabled(!busy, egui::Button::new(tr("Baixar modelo"))).clicked() {
                         action = Some(0);
                     }
                 }
                 match &state {
                     Some(speech::SpeechState::Downloading(fraction)) => {
                         ui.add(egui::ProgressBar::new(*fraction as f32).show_percentage());
-                        if ui.button(strings::CANCEL).clicked() {
+                        if ui.button(tr(strings::CANCEL)).clicked() {
                             action = Some(2);
                         }
                     }
                     Some(speech::SpeechState::Transcribing) => {
                         ui.horizontal(|ui| {
                             ui.spinner();
-                            ui.label("Transcrevendo (CPU, ~1× tempo real no notebook)…");
+                            ui.label(tr("Transcrevendo (CPU, ~1× tempo real no notebook)…"));
                         });
                     }
                     Some(speech::SpeechState::Failed(error)) => {
@@ -3180,20 +3284,20 @@ impl DcutApp {
             return;
         };
         let mut choice = None;
-        egui::Window::new(strings::UNSAVED_TITLE)
+        egui::Window::new(tr(strings::UNSAVED_TITLE))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(strings::UNSAVED_BODY);
+                ui.label(tr(strings::UNSAVED_BODY));
                 ui.horizontal(|ui| {
-                    if ui.button(strings::SAVE).clicked() {
+                    if ui.button(tr(strings::SAVE)).clicked() {
                         choice = Some(0);
                     }
-                    if ui.button(strings::DISCARD).clicked() {
+                    if ui.button(tr(strings::DISCARD)).clicked() {
                         choice = Some(1);
                     }
-                    if ui.button(strings::CANCEL).clicked() {
+                    if ui.button(tr(strings::CANCEL)).clicked() {
                         choice = Some(2);
                     }
                 });
@@ -3254,6 +3358,10 @@ impl DcutApp {
                     pressed(egui::Key::N),
                     pressed(egui::Key::Q),
                     pressed(egui::Key::T),
+                    pressed(egui::Key::W),
+                    pressed(egui::Key::ArrowUp),
+                    pressed(egui::Key::ArrowDown),
+                    pressed(egui::Key::F1),
                 ],
             )
         });
@@ -3278,7 +3386,26 @@ impl DcutApp {
             n,
             q,
             t,
+            w,
+            up,
+            down,
+            f1,
         ] = keys;
+        if q && !ctrl {
+            self.trim_to_playhead(TrimEdge::Head);
+        }
+        if w && !ctrl {
+            self.trim_to_playhead(TrimEdge::Tail);
+        }
+        if up {
+            self.jump_edit_point(false);
+        }
+        if down {
+            self.jump_edit_point(true);
+        }
+        if f1 {
+            self.show_shortcuts = !self.show_shortcuts;
+        }
         if t && !ctrl {
             self.add_text();
         }
@@ -3372,6 +3499,201 @@ impl DcutApp {
         }
     }
 
+    fn start_update_check(&mut self) {
+        let slot = Arc::new(std::sync::Mutex::new(None));
+        let worker = Arc::clone(&slot);
+        let _ = thread::Builder::new()
+            .name("d-cut-update".into())
+            .spawn(move || {
+                let result = settings::check_latest_release();
+                if let Ok(mut guard) = worker.lock() {
+                    *guard = Some(result);
+                }
+            });
+        self.update_result = Some(slot);
+    }
+
+    /// Writes the autosave every 30 s while there are unsaved changes.
+    fn autosave(&mut self) {
+        if !self.dirty
+            || self.generation == self.autosaved_generation
+            || self.last_autosave.elapsed().as_secs() < 30
+        {
+            return;
+        }
+        self.last_autosave = Instant::now();
+        self.autosaved_generation = self.generation;
+        match editor_project::autosave::write_autosave(&self.project, self.project_path.as_deref())
+        {
+            Ok(path) => tracing::info!(path = %path.display(), "autosaved"),
+            Err(error) => tracing::warn!(%error, "autosave failed"),
+        }
+    }
+
+    fn recovery_window(&mut self, ctx: &egui::Context) {
+        let Some(item) = self.recoverable.first().cloned() else {
+            return;
+        };
+        let mut choice = None;
+        egui::Window::new(tr("Recuperar projeto"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(tr("O D-cut foi fechado sem salvar. Existe um autosave:"));
+                let original = item.meta.original.as_ref().map_or_else(
+                    || "projeto sem título".to_owned(),
+                    |path| path.display().to_string(),
+                );
+                ui.monospace(original);
+                ui.horizontal(|ui| {
+                    if ui.button(tr("Recuperar")).clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.button(tr("Descartar")).clicked() {
+                        choice = Some(false);
+                    }
+                });
+            });
+        match choice {
+            Some(true) => {
+                self.recoverable.remove(0);
+                match editor_project::autosave::recover(&item) {
+                    Ok(project) => {
+                        self.new_project();
+                        self.project = project;
+                        self.project_path = item.meta.original.clone();
+                        self.dirty = true;
+                        self.generation += 1;
+                        let media: Vec<(u64, PathBuf)> = self
+                            .project
+                            .media
+                            .iter()
+                            .map(|media| (media.id, PathBuf::from(&media.path)))
+                            .collect();
+                        for (id, path) in media {
+                            let sender = self.probe_tx.clone();
+                            let _ = thread::Builder::new().spawn(move || {
+                                let result = probe(&path).map_err(|error| error.to_string());
+                                let _ = sender.send(ProbeDone {
+                                    path,
+                                    kind: ProbeKind::Refresh(id),
+                                    result,
+                                });
+                            });
+                        }
+                        self.status =
+                            tr("Projeto recuperado do autosave (salve para manter)").into();
+                    }
+                    Err(error) => self.status = format!("Não foi possível recuperar: {error}"),
+                }
+            }
+            Some(false) => {
+                self.recoverable.remove(0);
+                editor_project::autosave::discard(&item);
+            }
+            None => {}
+        }
+    }
+
+    fn shortcuts_window(&mut self, ctx: &egui::Context) {
+        if !self.show_shortcuts {
+            return;
+        }
+        let rows: [(&str, &str); 22] = [
+            ("Espaço", tr("Play / pausar")),
+            ("S · Ctrl+B", tr("Dividir no playhead")),
+            ("Q / W", tr("Cortar início / fim do clipe no playhead")),
+            ("Delete", tr("Excluir clipe ou texto")),
+            ("Shift+Delete", tr("Excluir e fechar espaço")),
+            ("Ctrl+Z", tr("Desfazer")),
+            ("Ctrl+Shift+Z · Ctrl+Y", tr("Refazer")),
+            ("← / →", tr("Frame anterior / próximo")),
+            ("Shift+← / →", tr("1 segundo")),
+            ("↑ / ↓", tr("Ponto de edição anterior / próximo")),
+            ("Home / End", tr("Início / fim da timeline")),
+            ("+ / − · Ctrl+roda", tr("Zoom da timeline")),
+            ("T", tr("Adicionar texto")),
+            ("Ctrl+N", tr("Novo projeto")),
+            ("Ctrl+O", tr("Abrir projeto")),
+            ("Ctrl+S", tr("Salvar")),
+            ("Ctrl+Shift+S", tr("Salvar como")),
+            ("Ctrl+I", tr("Importar mídia")),
+            ("Ctrl+E", tr("Exportar")),
+            ("F3", tr("HUD de desempenho")),
+            ("F1", tr("Esta lista")),
+            ("Ctrl+Q", tr("Sair")),
+        ];
+        let mut open = true;
+        egui::Window::new(tr("Atalhos"))
+            .open(&mut open)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
+                    for (keys, action) in rows {
+                        ui.monospace(keys);
+                        ui.label(action);
+                        ui.end_row();
+                    }
+                });
+            });
+        self.show_shortcuts = open;
+    }
+
+    /// Q/W: trim the selected clip (or the clip under the playhead) to the playhead.
+    fn trim_to_playhead(&mut self, edge: TrimEdge) {
+        let clip_id = self.selected_clip.or_else(|| {
+            editor_core::top_video_clip_at(&self.project, self.playhead).map(|clip| clip.id)
+        });
+        let Some(clip_id) = clip_id else {
+            self.status = tr("Posicione o playhead sobre um clipe").into();
+            return;
+        };
+        let Some((track, index)) = find_clip(&self.project, clip_id) else {
+            return;
+        };
+        let clip = &self.project.tracks[track].clips[index];
+        let delta = match edge {
+            TrimEdge::Head => self.playhead as i64 - clip.timeline_start_frame as i64,
+            TrimEdge::Tail => {
+                self.playhead as i64 - (clip.timeline_start_frame + clip.duration_frames) as i64
+            }
+        };
+        let command = trim_limits(&self.project, clip_id, edge).and_then(|(low, high)| {
+            trim_command(&self.project, clip_id, edge, delta.clamp(low, high))
+        });
+        self.run_edit(command, "Clipe cortado no playhead");
+    }
+
+    fn jump_edit_point(&mut self, forward: bool) {
+        let mut points: Vec<u64> = self
+            .project
+            .tracks
+            .iter()
+            .flat_map(|track| track.clips.iter())
+            .flat_map(|clip| {
+                [
+                    clip.timeline_start_frame,
+                    clip.timeline_start_frame + clip.duration_frames,
+                ]
+            })
+            .collect();
+        points.sort_unstable();
+        points.dedup();
+        let target = if forward {
+            points.into_iter().find(|point| *point > self.playhead)
+        } else {
+            points
+                .into_iter()
+                .rev()
+                .find(|point| *point < self.playhead)
+        };
+        if let Some(frame) = target {
+            self.seek(frame);
+        }
+    }
+
     fn update_title(&mut self, ctx: &egui::Context) {
         let name = self
             .project_path
@@ -3456,6 +3778,9 @@ impl eframe::App for DcutApp {
         self.handle_dialog(&ctx);
         self.export_window(&ctx);
         self.speech_window(&ctx);
+        self.recovery_window(&ctx);
+        self.shortcuts_window(&ctx);
+        self.autosave();
         self.unsaved_modal(&ctx);
         self.update_title(&ctx);
         if self.export_job.is_some() || !self.pending_probes.is_empty() || self.drag.is_some() {
@@ -3471,6 +3796,8 @@ impl eframe::App for DcutApp {
     }
 
     fn on_exit(&mut self) {
+        // A clean exit removes the autosave (unsaved changes were confirmed or discarded).
+        editor_project::autosave::clear_autosave();
         self.stop_playback();
         if let Some(job) = &self.export_job {
             job.cancel();

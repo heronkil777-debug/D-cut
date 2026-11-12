@@ -1,0 +1,1 @@
+{"id": "posterize", "name": "Posterizar", "category": "stylize", "params": [{"id": "levels", "name": "Níveis", "min": 2, "max": 16, "default": 5}], "golden_params": [4]}

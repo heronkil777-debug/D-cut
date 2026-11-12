@@ -1,0 +1,1 @@
+{"id": "letterbox", "name": "Faixas de cinema", "category": "stylize", "params": [{"id": "ratio", "name": "Proporção", "min": 1.33, "max": 2.76, "default": 2.39}], "golden_params": [2.39]}

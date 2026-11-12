@@ -1,0 +1,1 @@
+{"id": "zoom-blur", "name": "Desfoque radial", "category": "blur", "params": [{"id": "strength", "name": "Força", "min": 0, "max": 0.5, "default": 0.1}], "golden_params": [0.15]}

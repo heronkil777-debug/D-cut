@@ -1,0 +1,1 @@
+{"id": "exposure", "name": "Exposição", "category": "correction", "params": [{"id": "stops", "name": "Stops", "min": -3, "max": 3, "default": 0}], "golden_params": [0.8]}

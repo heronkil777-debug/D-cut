@@ -1,0 +1,1 @@
+{"id": "zoom", "name": "Zoom", "category": "distortion", "params": [{"id": "scale", "name": "Escala", "min": 1, "max": 4, "default": 1.2}, {"id": "x", "name": "Centro X", "min": 0, "max": 1, "default": 0.5}, {"id": "y", "name": "Centro Y", "min": 0, "max": 1, "default": 0.5}], "golden_params": [1.6, 0.6, 0.45]}

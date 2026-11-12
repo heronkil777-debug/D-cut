@@ -1,0 +1,1 @@
+{"id": "motion-blur", "name": "Desfoque de movimento", "category": "blur", "params": [{"id": "length", "name": "Comprimento (px)", "min": 0, "max": 64, "default": 12}, {"id": "angle", "name": "Ângulo", "min": 0, "max": 180, "default": 0}], "golden_params": [10, 30]}

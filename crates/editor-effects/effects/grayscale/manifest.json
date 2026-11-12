@@ -1,0 +1,1 @@
+{"id": "grayscale", "name": "Preto e branco", "category": "color", "params": [{"id": "amount", "name": "Intensidade", "min": 0, "max": 1, "default": 1}], "golden_params": [1]}

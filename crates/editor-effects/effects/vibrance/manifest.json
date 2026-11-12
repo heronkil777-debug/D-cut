@@ -1,0 +1,1 @@
+{"id": "vibrance", "name": "Vibração", "category": "correction", "params": [{"id": "amount", "name": "Intensidade", "min": -1, "max": 2, "default": 0}], "golden_params": [1.2]}

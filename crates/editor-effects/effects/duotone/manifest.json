@@ -1,0 +1,1 @@
+{"id": "duotone", "name": "Duotone", "category": "color", "params": [{"id": "mix", "name": "Intensidade", "min": 0, "max": 1, "default": 1}], "golden_params": [1]}

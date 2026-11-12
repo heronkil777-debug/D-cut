@@ -1,0 +1,46 @@
+# Maintainer: D-cut contributors
+# Source build of D-cut for Arch Linux. Not published to the AUR yet.
+pkgname=d-cut
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Local-first open-source video editor (Rust, wgpu, FFmpeg) — no account, no cloud, no telemetry"
+arch=('x86_64')
+url="https://github.com/heronkil777-debug/D-cut"
+license=('AGPL-3.0-or-later')
+depends=('ffmpeg' 'alsa-lib' 'vulkan-icd-loader' 'gcc-libs' 'glibc' 'curl')
+makedepends=('cargo')
+optdepends=('whisper.cpp: offline automatic subtitles (whisper-cli)'
+            'libva-mesa-driver: hardware H.264 export (VAAPI)')
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP') # replace with the release tarball checksum when tagging
+
+prepare() {
+    cd "D-cut-${pkgver}"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "D-cut-${pkgver}"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo build --frozen --release -p editor-ui -p editor-cli
+}
+
+check() {
+    cd "D-cut-${pkgver}"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo test --frozen --release -p editor-core -p editor-project -p editor-effects
+}
+
+package() {
+    cd "D-cut-${pkgver}"
+    install -Dm0755 target/release/d-cut "${pkgdir}/usr/bin/d-cut"
+    install -Dm0755 target/release/d-cut-cli "${pkgdir}/usr/bin/d-cut-cli"
+    install -Dm0644 packaging/linux/d-cut.desktop "${pkgdir}/usr/share/applications/d-cut.desktop"
+    install -Dm0644 packaging/linux/d-cut.metainfo.xml "${pkgdir}/usr/share/metainfo/d-cut.metainfo.xml"
+    install -Dm0644 assets/branding/d-cut-icon-256.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/d-cut.png"
+    install -Dm0644 THIRD_PARTY_LICENSES "${pkgdir}/usr/share/doc/d-cut/THIRD_PARTY_LICENSES"
+    install -Dm0644 LICENSE "${pkgdir}/usr/share/licenses/d-cut/LICENSE"
+}

@@ -1,0 +1,1 @@
+{"id": "mirror", "name": "Espelho", "category": "distortion", "params": [{"id": "mode", "name": "Modo (0 horiz., 1 vert.)", "min": 0, "max": 1, "default": 0}], "golden_params": [0]}

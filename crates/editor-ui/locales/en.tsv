@@ -1,0 +1,148 @@
+Desfeito	Undone
+Nada para desfazer	Nothing to undo
+Refeito	Redone
+Nada para refazer	Nothing to redo
+Posicione o playhead sobre um clipe para dividir	Place the playhead over a clip to split
+Selecione um clipe para excluir	Select a clip to delete
+Lendo mídia…	Reading media…
+Novo projeto	New project
+Pausado	Paused
+A timeline está vazia	The timeline is empty
+Fim da timeline	End of timeline
+Velocidade	Speed
+Transição de entrada	Incoming transition
+Duração (s)	Duration (s)
+Precisa de um clipe imediatamente antes, na mesma faixa.	Needs a clip right before it on the same track.
+Volume (dB)	Volume (dB)
+Fade in (s)	Fade in (s)
+out	out
+Reduzir ruído	Reduce noise
+Efeitos (GPU)	Effects (GPU)
++ Adicionar efeito	+ Add effect
+remover	remove
+Grava uma chave no playhead (animação)	Set a keyframe at the playhead (animation)
+limpar	clear
+Atalhos (F1)	Shortcuts (F1)
+Mídia	Media
+Propriedades	Properties
+Nada para exportar: a timeline está vazia	Nothing to export: the timeline is empty
+Clique duplo: adicionar à timeline	Double-click: add to timeline
+Ímã (snap) na timeline	Timeline snapping
+Usar proxies na prévia (540p)	Use proxies in preview (540p)
+Cópias leves geradas em segundo plano; o export usa sempre os originais	Light copies generated in the background; export always uses the originals
+Verificar atualizações (usa a internet)	Check for updates (uses the internet)
+Você está na versão mais recente.	You are on the latest version.
+Início	Start
+Duração	Duration
+Trecho da fonte	Source range
+Vídeo e áudio vinculados	Video and audio linked
+Mover para:	Move to:
+Texto	Text
+Tamanho	Size
+Altura (0 topo)	Height (0 = top)
+Horizontal	Horizontal
+Cor	Color
+Início (s)	Start (s)
+Aplicar	Apply
+Texto e legendas são compostos na GPU (mesmo shader da prévia e do export).	Text and subtitles are composited on the GPU (same shader for preview and export).
+Proporção	Aspect ratio
+Resolução	Resolution
+O FPS só pode mudar antes de importar mídia	FPS can only change before importing media
+Seta esquerda	Left arrow
+Play/Pause (Espaço)	Play/Pause (Space)
+Seta direita	Right arrow
+Fim	End
+Diminuir zoom (Ctrl+roda / -)	Zoom out (Ctrl+wheel / -)
+Aumentar zoom (Ctrl+roda / +)	Zoom in (Ctrl+wheel / +)
+Ajustar	Fit
+Mostrar a timeline inteira	Show the whole timeline
++ Texto	+ Text
+Título no playhead (T)	Title at playhead (T)
+Legendas .srt…	.srt subtitles…
+Legendas automáticas…	Auto subtitles…
+Whisper local, offline	Local Whisper, offline
++ Faixa V	+ V track
+Nova faixa de vídeo (por cima)	New video track (on top)
++ Faixa A	+ A track
+Nova faixa de áudio	New audio track
+Arquivo:	File:
+CRF (menor = melhor)	CRF (lower = better)
+QP (menor = melhor)	QP (lower = better)
+Exportado e conferido com ffprobe:	Exported and verified with ffprobe:
+Falha no export:	Export failed:
+Escolha o arquivo de saída	Choose the output file
+Exportando…	Exporting…
+Legendas automáticas (PT-BR, offline)	Auto subtitles (PT-BR, offline)
+Modelo instalado e verificado.	Model installed and verified.
+Transcrever a timeline	Transcribe the timeline
+Baixar modelo	Download model
+Transcrevendo (CPU, ~1× tempo real no notebook)…	Transcribing (CPU, ~1× real time on the laptop)…
+Recuperar projeto	Recover project
+O D-cut foi fechado sem salvar. Existe um autosave:	D-cut was closed without saving. An autosave exists:
+Recuperar	Recover
+Descartar	Discard
+Projeto recuperado do autosave (salve para manter)	Project recovered from autosave (save to keep it)
+Play / pausar	Play / pause
+Dividir no playhead	Split at playhead
+Cortar início / fim do clipe no playhead	Trim clip start / end to playhead
+Excluir clipe ou texto	Delete clip or text
+Excluir e fechar espaço	Delete and close gap
+Desfazer	Undo
+Refazer	Redo
+Frame anterior / próximo	Previous / next frame
+1 segundo	1 second
+Ponto de edição anterior / próximo	Previous / next edit point
+Início / fim da timeline	Timeline start / end
+Zoom da timeline	Timeline zoom
+Adicionar texto	Add text
+Abrir projeto	Open project
+Salvar	Save
+Salvar como	Save as
+Importar mídia	Import media
+Exportar	Export
+HUD de desempenho	Performance HUD
+Esta lista	This list
+Sair	Quit
+Atalhos	Shortcuts
+Posicione o playhead sobre um clipe	Place the playhead over a clip
+Acima	Up
+Pasta acima	Parent folder
+Pasta pessoal	Home folder
+Mostrar todos os arquivos	Show all files
+Mostrar ocultos	Show hidden
+(pasta vazia ou sem arquivos compatíveis)	(empty folder or no compatible files)
+Nome:	Name:
+Ctrl+clique seleciona vários	Ctrl+click selects several
+Salvar projeto	Save project
+Arquivo de saída	Output file
+Importar legendas (.srt)	Import subtitles (.srt)
+Importar	Import
+Abrir	Open
+Usar este arquivo	Use this file
+Nenhuma mídia importada	No media imported
+Clique em Importar ou arraste arquivos de vídeo/áudio para esta janela.	Click Import or drag video/audio files into this window.
+Importar…	Import…
++ Adicionar à timeline	+ Add to timeline
+Novo	New
+Abrir…	Open…
+Salvar como…	Save as…
+Exportar…	Export…
+Dividir	Split
+Excluir	Delete
+Desvincular áudio	Unlink audio
+Nada selecionado	Nothing selected
+Formato do projeto	Project format
+Qualidade da prévia	Preview quality
+100% local · sem conta · sem telemetria	100% local · no account · no telemetry
+Adicione mídia da biblioteca para começar a editar	Add media from the library to start editing
+Importe um vídeo e adicione à timeline	Import a video and add it to the timeline
+Prévia GPU indisponível (wgpu não inicializou)	GPU preview unavailable (wgpu failed to start)
+Espaço play/pause · S dividir · Del excluir · Shift+Del fechar espaço · Ctrl+Z/Ctrl+Shift+Z · setas: frame · Ctrl+Q sair · Ctrl+roda zoom · F3 HUD	Space play/pause · S split · Del delete · Shift+Del close gap · Ctrl+Z/Ctrl+Shift+Z · arrows: frame · Ctrl+Q quit · Ctrl+wheel zoom · F3 HUD
+Alterações não salvas	Unsaved changes
+Salvar o projeto antes de continuar?	Save the project before continuing?
+Cancelar	Cancel
+Exportar vídeo (MP4 H.264 + AAC)	Export video (MP4 H.264 + AAC)
+Qualidade (x264, CPU)	Quality (x264, CPU)
+Rápido (VAAPI, GPU)	Fast (VAAPI, GPU)
+Fechar	Close
+Escolher…	Choose…

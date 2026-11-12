@@ -9,6 +9,8 @@ use std::{
 
 use eframe::egui;
 
+use crate::i18n::tr;
+
 use crate::strings;
 
 pub const MEDIA_EXTENSIONS: &[&str] = &[
@@ -28,13 +30,13 @@ pub enum Purpose {
 
 impl Purpose {
     fn title(self) -> &'static str {
-        match self {
+        tr(match self {
             Self::ImportMedia => "Importar mídia",
             Self::OpenProject => "Abrir projeto",
             Self::SaveProject => "Salvar projeto",
             Self::ExportVideo => "Arquivo de saída",
             Self::ImportSubtitles => "Importar legendas (.srt)",
-        }
+        })
     }
 
     fn is_save(self) -> bool {
@@ -190,12 +192,19 @@ impl FileDialog {
             .show(ctx, |ui| {
                 let mut navigate = None;
                 ui.horizontal(|ui| {
-                    if ui.button("Acima").on_hover_text("Pasta acima").clicked()
+                    if ui
+                        .button(tr("Acima"))
+                        .on_hover_text(tr("Pasta acima"))
+                        .clicked()
                         && let Some(parent) = self.directory.parent()
                     {
                         navigate = Some(parent.to_owned());
                     }
-                    if ui.button("Início").on_hover_text("Pasta pessoal").clicked() {
+                    if ui
+                        .button(tr("Início"))
+                        .on_hover_text(tr("Pasta pessoal"))
+                        .clicked()
+                    {
                         navigate = Some(home_dir());
                     }
                     for (label, sub) in [("Vídeos", "Videos"), ("Downloads", "Downloads")] {
@@ -221,10 +230,10 @@ impl FileDialog {
                 });
                 ui.horizontal(|ui| {
                     let mut changed = ui
-                        .checkbox(&mut self.show_all, "Mostrar todos os arquivos")
+                        .checkbox(&mut self.show_all, tr("Mostrar todos os arquivos"))
                         .changed();
                     changed |= ui
-                        .checkbox(&mut self.show_hidden, "Mostrar ocultos")
+                        .checkbox(&mut self.show_hidden, tr("Mostrar ocultos"))
                         .changed();
                     if changed {
                         self.refresh();
@@ -276,13 +285,13 @@ impl FileDialog {
                             }
                         }
                         if self.entries.is_empty() && self.error.is_none() {
-                            ui.weak("(pasta vazia ou sem arquivos compatíveis)");
+                            ui.weak(tr("(pasta vazia ou sem arquivos compatíveis)"));
                         }
                     });
                 ui.separator();
                 if self.purpose.is_save() {
                     ui.horizontal(|ui| {
-                        ui.label("Nome:");
+                        ui.label(tr("Nome:"));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.file_name)
                                 .desired_width(ui.available_width()),
@@ -291,16 +300,16 @@ impl FileDialog {
                 }
                 ui.horizontal(|ui| {
                     if self.purpose == Purpose::ImportMedia {
-                        ui.weak("Ctrl+clique seleciona vários");
+                        ui.weak(tr("Ctrl+clique seleciona vários"));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let confirm = match self.purpose {
+                        let confirm = tr(match self.purpose {
                             Purpose::ImportMedia => "Importar",
                             Purpose::OpenProject => "Abrir",
                             Purpose::SaveProject => "Salvar",
                             Purpose::ExportVideo => "Usar este arquivo",
                             Purpose::ImportSubtitles => "Importar",
-                        };
+                        });
                         let enabled = if self.purpose.is_save() {
                             self.save_target().is_some()
                         } else {
@@ -317,7 +326,7 @@ impl FileDialog {
                                 Outcome::Picked(self.selected.clone())
                             };
                         }
-                        if ui.button(strings::CANCEL).clicked() {
+                        if ui.button(tr(strings::CANCEL)).clicked() {
                             outcome = Outcome::Cancelled;
                         }
                     });

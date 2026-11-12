@@ -715,6 +715,7 @@ name = "editor-project"
 version = "0.1.0"
 dependencies = [
  "editor-core",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
 ]
@@ -765,6 +766,8 @@ dependencies = [
  "editor-speech",
  "editor-text",
  "eframe",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

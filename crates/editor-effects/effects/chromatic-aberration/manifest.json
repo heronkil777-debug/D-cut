@@ -1,0 +1,1 @@
+{"id": "chromatic-aberration", "name": "Aberração cromática", "category": "stylize", "params": [{"id": "offset", "name": "Deslocamento (px)", "min": 0, "max": 20, "default": 4}], "golden_params": [5]}

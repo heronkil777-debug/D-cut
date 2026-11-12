@@ -1,0 +1,1 @@
+{"id": "film-grain", "name": "Granulado", "category": "stylize", "params": [{"id": "amount", "name": "Intensidade", "min": 0, "max": 0.5, "default": 0.08}], "golden_params": [0.2]}

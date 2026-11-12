@@ -92,5 +92,8 @@ if [ ! -x "${tool}" ]; then
 fi
 printf 'appimagetool sha256: %s\n' "$(sha256sum "${tool}" | cut -d' ' -f1)"
 
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "${tool}" --no-appstream \
-    "${app_dir}" "${out_dir}/D-cut-x86_64.AppImage"
+# Embedded update information (used by AppImageUpdate/Gear Lever; the app itself only checks
+# for updates when the user opts in). appimagetool also writes the matching .zsync file.
+update_info="${D_CUT_UPDATE_INFO:-gh-releases-zsync|heronkil777-debug|D-cut|latest|D-cut-*x86_64.AppImage.zsync}"
+(cd "${out_dir}" && ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "${tool}" --no-appstream \
+    -u "${update_info}" "${app_dir}" "${out_dir}/D-cut-x86_64.AppImage")

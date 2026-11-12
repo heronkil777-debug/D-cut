@@ -1,0 +1,1 @@
+{"id": "edge-detect", "name": "Contornos", "category": "stylize", "params": [{"id": "strength", "name": "Força", "min": 0.5, "max": 5, "default": 2}], "golden_params": [2]}
