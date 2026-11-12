@@ -1,0 +1,23 @@
+pkgbase = d-cut
+	pkgdesc = Local-first open-source video editor (Rust, wgpu, FFmpeg) — no account, no cloud, no telemetry
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/heronkil777-debug/D-cut
+	arch = x86_64
+	license = AGPL-3.0-or-later
+	makedepends = cargo
+	depends = ffmpeg
+	depends = alsa-lib
+	depends = vulkan-icd-loader
+	depends = libxkbcommon
+	depends = gcc-libs
+	depends = glibc
+	depends = curl
+	optdepends = whisper.cpp: offline automatic subtitles (whisper-cli)
+	optdepends = vulkan-radeon: Vulkan driver for AMD GPUs
+	optdepends = vulkan-intel: Vulkan driver for Intel GPUs
+	optdepends = libva-mesa-driver: hardware H.264 export (VAAPI)
+	source = d-cut-0.1.0.tar.gz::https://github.com/heronkil777-debug/D-cut/archive/refs/tags/v0.1.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = d-cut

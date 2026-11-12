@@ -61,6 +61,19 @@ impl Settings {
     }
 }
 
+/// `https://api.github.com/repos/<owner>/<repo>/releases/latest`, from the `repository` field of
+/// `Cargo.toml` (so changing the repo does not require touching code).
+fn releases_api_url() -> Option<String> {
+    let parts: Vec<&str> = env!("CARGO_PKG_REPOSITORY")
+        .trim_end_matches('/')
+        .rsplit('/')
+        .take(2)
+        .collect();
+    let [repo, owner] = [*parts.first()?, *parts.get(1)?];
+    (!repo.is_empty() && !owner.is_empty())
+        .then(|| format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"))
+}
+
 /// Opt-in update check: latest GitHub release tag via the system `curl`. Returns the tag when
 /// it differs from the running version. Call from a worker thread.
 pub fn check_latest_release() -> Result<Option<String>, String> {
@@ -73,7 +86,7 @@ pub fn check_latest_release() -> Result<Option<String>, String> {
             "10",
             "--location",
         ])
-        .arg("https://api.github.com/repos/heronkil777-debug/D-cut/releases/latest")
+        .arg(releases_api_url().ok_or("repository not set in Cargo.toml")?)
         .output()
         .map_err(|error| error.to_string())?;
     if !output.status.success() {
@@ -88,4 +101,29 @@ pub fn check_latest_release() -> Result<Option<String>, String> {
         .trim_start_matches('v')
         .to_owned();
     Ok((tag != env!("CARGO_PKG_VERSION")).then_some(tag))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn releases_url_comes_from_the_repository_field() {
+        let url = releases_api_url().expect("Cargo.toml sets repository");
+        assert!(url.starts_with("https://api.github.com/repos/"), "{url}");
+        assert!(url.ends_with("/releases/latest"), "{url}");
+        // owner/repo, no extra path segments
+        let slug = url
+            .trim_start_matches("https://api.github.com/repos/")
+            .trim_end_matches("/releases/latest");
+        assert_eq!(slug.split('/').count(), 2, "{slug}");
+    }
+
+    #[test]
+    fn language_follows_the_system_locale_by_default() {
+        // The default is pt-BR for pt_*, en otherwise; D_CUT_LANG overrides it in load().
+        let settings = Settings::default();
+        assert!(settings.language == "pt" || settings.language == "en");
+        assert!(!settings.check_updates);
+    }
 }

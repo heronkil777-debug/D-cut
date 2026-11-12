@@ -50,6 +50,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build in the Ubuntu 22.04 container
+        env:
+          # Embedded update info must point at this repository, not a hardcoded slug.
+          D_CUT_UPDATE_INFO: gh-releases-zsync|${{ github.repository_owner }}|${{ github.event.repository.name }}|latest|D-cut-*x86_64.AppImage.zsync
         run: scripts/build-appimage.sh
       - name: Create zsync metadata
         run: |
@@ -66,3 +69,33 @@ jobs:
             build/appimage/D-cut-x86_64.AppImage.sha256
             build/appimage/D-cut-x86_64.AppImage.zsync
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: appimage
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: D-cut-AppImage
+          path: build/appimage
+      - name: Create the release with the AppImage, checksum and zsync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="release/RELEASE_NOTES-${TAG}.md"
+          [ -f "${notes}" ] || notes="release/RELEASE_NOTES.md"
+          ls -l build/appimage
+          gh release create "${TAG}" \
+            --title "D-cut ${TAG}" \
+            --notes-file "${notes}" \
+            --verify-tag \
+            build/appimage/D-cut-x86_64.AppImage \
+            build/appimage/D-cut-x86_64.AppImage.sha256 \
+            build/appimage/D-cut-x86_64.AppImage.zsync

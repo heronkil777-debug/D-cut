@@ -31,7 +31,7 @@
   novos entraram só como `manifest.json` + `effect.wgsl` (+ golden), sem tocar no motor.
 - **Fase 7 — atalhos:** Q/W (cortar início/fim no playhead), ↑/↓ (ponto de edição), F1 (lista), e a lista completa
   na janela "Atalhos"; atalhos desligados quando um campo de texto tem foco (`egui_wants_keyboard_input`).
-- **Fase 7 — AUR:** `packaging/aur/PKGBUILD` compilado por `scripts/test-pkgbuild.sh` (makepkg local, sem sudo,
+- **Fase 7 — AUR:** `release/aur/PKGBUILD` compilado por `scripts/test-pkgbuild.sh` (makepkg local, sem sudo,
   `--nodeps` porque o cargo vem do rustup): pacote **11.376.910 bytes** com `usr/bin/d-cut`, `usr/bin/d-cut-cli`,
   `.desktop`, metainfo, ícone, `LICENSE` e `THIRD_PARTY_LICENSES`.
 - **Fase 7 — AppImage:** `build/appimage/D-cut-x86_64.AppImage` **29.522.424 bytes**, sha256
