@@ -373,6 +373,7 @@ struct DcutApp {
     last_autosave: Instant,
     autosaved_generation: u64,
     recoverable: Vec<editor_project::autosave::Recoverable>,
+    logged_recovery: Option<PathBuf>,
     show_shortcuts: bool,
     update_result: Option<UpdateSlot>,
 }
@@ -465,6 +466,7 @@ impl DcutApp {
             last_autosave: Instant::now(),
             autosaved_generation: 0,
             recoverable: editor_project::autosave::find_recoverable(),
+            logged_recovery: None,
             show_shortcuts: false,
             update_result: None,
         };
@@ -3537,6 +3539,15 @@ impl DcutApp {
         let Some(item) = self.recoverable.first().cloned() else {
             return;
         };
+        if self.logged_recovery.as_ref() != Some(&item.project_path) {
+            tracing::info!(
+                autosave = %item.project_path.display(),
+                original = ?item.meta.original,
+                pid = item.meta.pid,
+                "offering crash recovery"
+            );
+            self.logged_recovery = Some(item.project_path.clone());
+        }
         let mut choice = None;
         egui::Window::new(tr("Recuperar projeto"))
             .collapsible(false)
@@ -3560,6 +3571,7 @@ impl DcutApp {
             });
         match choice {
             Some(true) => {
+                tracing::info!("autosave recovered by the user");
                 self.recoverable.remove(0);
                 match editor_project::autosave::recover(&item) {
                     Ok(project) => {
@@ -3592,6 +3604,7 @@ impl DcutApp {
                 }
             }
             Some(false) => {
+                tracing::info!("autosave discarded by the user");
                 self.recoverable.remove(0);
                 editor_project::autosave::discard(&item);
             }
@@ -3817,7 +3830,13 @@ pub fn run() -> Result<()> {
         tracing::error!(%info, "panic");
         default_hook(info);
     }));
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), log = %log_path.display(), "D-cut starting");
+    let startup_settings = settings::Settings::load();
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        language = %startup_settings.language,
+        log = %log_path.display(),
+        "D-cut starting"
+    );
     let startup_files: Vec<PathBuf> = std::env::args_os()
         .skip(1)
         .map(PathBuf::from)

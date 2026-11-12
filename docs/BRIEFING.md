@@ -273,6 +273,12 @@ Divida em subfases para implementação e validação. A regra de esperar “ok�
 5. AUR (PKGBUILD) e auto-update via zsync opt-in.
 6. Reavaliar templates e biblioteca de músicas.
 
+**Status:** implementado em 2026-11-11 (detalhes e limitações em `docs/STATUS.md` e `docs/DECISIONS.md`).
+Autosave a cada 30 s com recuperação de PID morto; atalhos Q/W/↑/↓/F1 e janela de atalhos; catálogo de 45 pacotes
+(29 efeitos + 16 transições); i18n por catálogo `en.tsv` (148 textos, sem dependência nova); PKGBUILD testado com
+makepkg local e update info zsync embutida no AppImage (checagem só com opt-in explícito). Templates e biblioteca de
+músicas seguem fora, com o motivo registrado. Pendente para publicar: push/CI, tag, `sha256sums` e envio ao AUR.
+
 ## 11. Alinhamento (mensagem depois da minha escolha, caminho D)
 
 Numa só mensagem:
