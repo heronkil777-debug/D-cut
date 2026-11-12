@@ -141,6 +141,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recovered_media_paths_resolve_to_the_same_absolute_file() {
+        use editor_core::{MediaAsset, Track, TrackKind};
+        let root =
+            std::env::temp_dir().join(format!("d-cut-autosave-media-{}", std::process::id()));
+        let dir = root.join("state/autosave");
+        let media_dir = root.join("videos");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&media_dir).expect("media dir");
+        let media_path = media_dir.join("clip one.mp4");
+        fs::write(&media_path, b"not really a video").expect("media file");
+        let project = Project {
+            media: vec![MediaAsset {
+                id: 1,
+                path: media_path.display().to_string(),
+                content_hash: None,
+                duration_frames: 10,
+                width: 2,
+                height: 2,
+                has_video: true,
+                has_audio: false,
+                rotation_degrees: 0,
+            }],
+            tracks: vec![Track {
+                id: 2,
+                name: "V1".into(),
+                kind: TrackKind::Video,
+                clips: Vec::new(),
+            }],
+            ..Project::default()
+        };
+        write_autosave_in(&dir, 99_999_999, &project, None).expect("write");
+        let found = find_recoverable_in(&dir);
+        assert_eq!(found.len(), 1);
+        let recovered = recover(&found[0]).expect("recover");
+        // The autosave lives in a different directory; media paths are stored relative to it.
+        assert_eq!(recovered.media[0].path, media_path.display().to_string());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn crashed_session_is_recoverable_and_live_or_own_sessions_are_not() {
         let dir = std::env::temp_dir().join(format!("d-cut-autosave-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

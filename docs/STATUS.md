@@ -13,12 +13,12 @@
 
 - `cargo fmt --all --check` ✅ · `cargo clippy --workspace --all-targets -- -D warnings` ✅ ·
   `cargo deny check` ✅ (advisories/bans/licenses/sources ok; exceção justificada RUSTSEC-2026-0192).
-- `cargo test --workspace` ✅ **54 testes** (52 das fases 1–6 + autosave + i18n), com **FFmpeg 9.0.2 (host)** e
+- `cargo test --workspace` ✅ **55 testes** (52 das fases 1–6 + autosave, recuperação com mídia em outro diretório e i18n), com **FFmpeg 9.0.2 (host)** e
   **7.1.5 (embutido)**.
 - Playback 1080p30 63,8 s (Vega 8): 0 perdidos, 0 underruns, deriva A/V 3,4 ms. Wayland e X11 fecham com exit 0.
 - Comparação FFmpeg-only × wgpu medida (DECISIONS): 79,8 vs 32–38 fps no export 1080p; PSNR entre saídas 43,2 dB.
-- **Fase 7 — autosave/recuperação:** teste unitário de `editor-project::autosave` (grava, encontra só PIDs mortos,
-  recupera e apaga). Em execução real, com um autosave de PID inexistente:
+- **Fase 7 — autosave/recuperação:** testes unitários de `editor-project::autosave` (grava, encontra só PIDs mortos,
+  recupera e apaga; e um projeto com mídia recuperado de outro diretório volta a apontar para o mesmo arquivo absoluto). Em execução real, com um autosave de PID inexistente:
   `D_CUT_LANG=en D_CUT_AUTOSAVE_DIR=… ./target/debug/d-cut` → log
   `offering crash recovery autosave=…/autosave-99999999.dcut original=Some("/home/hero/Videos/meu-video.dcut") pid=99999999`;
   saída limpa com exit 0.
