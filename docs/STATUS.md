@@ -34,8 +34,13 @@
 - **Fase 7 — AUR:** `release/aur/PKGBUILD` compilado por `scripts/test-pkgbuild.sh` (makepkg local, sem sudo,
   `--nodeps` porque o cargo vem do rustup): pacote **11.376.910 bytes** com `usr/bin/d-cut`, `usr/bin/d-cut-cli`,
   `.desktop`, metainfo, ícone, `LICENSE` e `THIRD_PARTY_LICENSES`.
-- **Fase 7 — AppImage:** `build/appimage/D-cut-x86_64.AppImage` **29.522.424 bytes**, sha256
-  `03a9ed302d7d7eff6df6eb4c0e4a2857d0cee607ee60df7fd4d98fc4b6741e2f`, `.zsync` de 101.125 bytes,
+- **Publicação (kit):** `release/` tem o roteiro (`README.md`), release notes, `PKGBUILD` + `.SRCINFO` canônicos,
+  `set-repo.sh` (troca owner/repo em Cargo.toml, metainfo, PKGBUILD e update info), `fill-sha256sums.sh` e
+  `prepare-aur.sh`. O CI embute a update info a partir de `github.repository` e, na tag, cria o GitHub Release com
+  AppImage + `.sha256` + `.zsync`. Scripts testados localmente (repo falso, tarball local, `makepkg`); publicação em si
+  não executada (sem remote/credenciais nesta máquina).
+- **Fase 7 — AppImage:** `build/appimage/D-cut-x86_64.AppImage` **29.530.616 bytes**, sha256
+  `ec32ccba7df4e604a1747795d950b880c40041f7430e2eca885ceb42390fb1da`, `.zsync` de 101.153 bytes,
   update info embutida (`readelf -p .upd_info` → `gh-releases-zsync|heronkil777-debug|D-cut|latest|D-cut-*x86_64.AppImage.zsync`).
   Execução: `--appimage-extract-and-run` inicia e fecha com exit 0 (log `language=en`); com um `ffmpeg` falso no PATH
   (prova que usa o embutido) `--cli render-project p720.dcut --fast` → **2100 frames, 70,000 s, 58,3 fps**, h264/yuv420p + AAC.
