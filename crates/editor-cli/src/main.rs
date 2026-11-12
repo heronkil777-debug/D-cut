@@ -79,11 +79,13 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("render-project") => run_render_project(args),
+        Some("download-model") => run_download_model(),
+        Some("transcribe") => run_transcribe(args),
         Some("export-quality") => run_export(args, false),
         Some("export-vaapi") => run_export(args, true),
         Some("--help" | "-h") | None => {
             println!(
-                "D-cut local project and media tools\n\nUsage:\n  d-cut-cli --version\n  d-cut-cli validate-project <project.dcut>\n  d-cut-cli import-srt <input.srt> <output.dcut> <fps-num> <fps-den>\n  d-cut-cli probe <media-file>\n  d-cut-cli render-project <project.dcut> <output.mp4> [--fast] [--crf N] [--preset NAME] [--qp N] [--vaapi-device PATH] [--gpu-composite]\n  d-cut-cli export-quality <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <crf>\n  d-cut-cli export-vaapi <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <device> <qp>\n\nrender-project uses the same FFmpeg timeline graph as the editor export: H.264 + AAC 48 kHz,\nyuv420p, BT.709, +faststart. --fast uses VAAPI (h264_vaapi); the default uses libx264 CRF 20.\nFFmpeg and ffprobe must be installed (or set D_CUT_FFMPEG / D_CUT_FFPROBE)."
+                "D-cut local project and media tools\n\nUsage:\n  d-cut-cli --version\n  d-cut-cli validate-project <project.dcut>\n  d-cut-cli import-srt <input.srt> <output.dcut> <fps-num> <fps-den>\n  d-cut-cli probe <media-file>\n  d-cut-cli download-model            (opt-in: Whisper small, 487 MB, MIT, SHA-256 verified)\n  d-cut-cli transcribe <project.dcut> [--output out.dcut] [--language pt] [--threads N]\n  d-cut-cli render-project <project.dcut> <output.mp4> [--fast] [--crf N] [--preset NAME] [--qp N] [--vaapi-device PATH] [--gpu-composite]\n  d-cut-cli export-quality <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <crf>\n  d-cut-cli export-vaapi <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <device> <qp>\n\nrender-project uses the same FFmpeg timeline graph as the editor export: H.264 + AAC 48 kHz,\nyuv420p, BT.709, +faststart. --fast uses VAAPI (h264_vaapi); the default uses libx264 CRF 20.\nFFmpeg and ffprobe must be installed (or set D_CUT_FFMPEG / D_CUT_FFPROBE)."
             );
             Ok(())
         }
@@ -189,6 +191,93 @@ fn run_render_project(mut args: impl Iterator<Item = String>) -> Result<()> {
         project.format.frame_rate_numerator,
         project.format.frame_rate_denominator
     );
+    Ok(())
+}
+
+fn run_download_model() -> Result<()> {
+    let model = editor_speech::MODEL_SMALL;
+    println!(
+        "Downloading {} ({:.0} MB, license: {}) to {}",
+        model.name,
+        model.bytes as f64 / 1e6,
+        model.license,
+        editor_speech::model_path(&model).display()
+    );
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut last = None;
+    let path = editor_speech::download_model(&model, &cancel, |fraction| {
+        let percent = (fraction * 100.0) as u32;
+        if last != Some(percent) {
+            last = Some(percent);
+            eprint!("\rdownloading… {percent:3}%");
+        }
+    })?;
+    eprintln!();
+    println!(
+        "Model verified (SHA-256 {}) at {}",
+        model.sha256,
+        path.display()
+    );
+    Ok(())
+}
+
+fn run_transcribe(mut args: impl Iterator<Item = String>) -> Result<()> {
+    let project_path = args
+        .next()
+        .context("usage: d-cut-cli transcribe <project.dcut> [--output out.dcut]")?;
+    let mut output = PathBuf::from(&project_path);
+    let mut language = "pt".to_owned();
+    let mut threads = std::thread::available_parallelism().map_or(4, |count| count.get());
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--output" => output = PathBuf::from(args.next().context("missing output")?),
+            "--language" => language = args.next().context("missing language")?,
+            "--threads" => threads = parse_next(&mut args, "threads")?,
+            other => bail!("unknown option {other}"),
+        }
+    }
+    let model = editor_speech::MODEL_SMALL;
+    if !editor_speech::model_ready(&model) {
+        bail!("model not downloaded; run `d-cut-cli download-model` first (opt-in)");
+    }
+    let mut project = editor_project::load(&project_path)
+        .with_context(|| format!("could not load {project_path}"))?;
+    let total = project.duration_frames();
+    if total == 0 {
+        bail!("the project timeline is empty");
+    }
+    let job = editor_media::timeline::TimelineRender::from_project(&project, 0, total, 2, 2)?;
+    let wav = std::env::temp_dir().join(format!("d-cut-speech-{}.wav", std::process::id()));
+    editor_media::timeline::export_audio_wav(&job, &wav, 16_000)?;
+    let started = std::time::Instant::now();
+    let result =
+        editor_speech::transcribe(&wav, &editor_speech::model_path(&model), &language, threads);
+    let _ = std::fs::remove_file(&wav);
+    let words = result?;
+    let cues = editor_speech::group_words(&words, 42, 3500, 700);
+    let seconds = project.format.frames_to_seconds(total);
+    println!(
+        "{} words, {} cues in {:.1} s ({:.2}x realtime)",
+        words.len(),
+        cues.len(),
+        started.elapsed().as_secs_f64(),
+        seconds / started.elapsed().as_secs_f64().max(1e-6)
+    );
+    for cue in &cues {
+        println!(
+            "  {:>7.2}–{:<7.2} {}",
+            cue.start_ms as f64 / 1000.0,
+            cue.end_ms as f64 / 1000.0,
+            cue.text
+        );
+    }
+    let command = editor_speech::subtitles_command(&project, &cues);
+    command
+        .apply(&mut project)
+        .map_err(|error| anyhow::anyhow!("could not add subtitles: {error}"))?;
+    editor_project::save(&output, &project)
+        .with_context(|| format!("could not save {}", output.display()))?;
+    println!("Subtitles saved to {}", output.display());
     Ok(())
 }
 

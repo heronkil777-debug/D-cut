@@ -479,6 +479,37 @@ pub fn spawn_audio_stream(
     })
 }
 
+/// Renders the mixed timeline audio to a mono 16-bit WAV (used for speech recognition).
+pub fn export_audio_wav(
+    job: &TimelineRender,
+    output: &Path,
+    sample_rate: u32,
+) -> Result<(), MediaError> {
+    let mut graph = Graph::default();
+    add_audio_chain(&mut graph, job, sample_rate, "fltp");
+    let result = Command::new(ffmpeg_program())
+        .args(["-hide_banner", "-nostdin", "-y", "-loglevel", "error"])
+        .args(&graph.input_args)
+        .arg("-filter_complex")
+        .arg(graph.script())
+        .args(["-map", "[aout]", "-ac", "1", "-ar"])
+        .arg(sample_rate.to_string())
+        .args(["-c:a", "pcm_s16le"])
+        .arg(output)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(spawn_error)?;
+    if result.status.success() {
+        Ok(())
+    } else {
+        Err(MediaError::Failed {
+            program: ffmpeg_program().to_string_lossy().into_owned(),
+            status: result.status.to_string(),
+            stderr: String::from_utf8_lossy(&result.stderr).trim().to_owned(),
+        })
+    }
+}
+
 /// Video encoder settings for a timeline export (always H.264 + AAC in MP4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportEncoder {

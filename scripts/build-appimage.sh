@@ -56,6 +56,14 @@ MSG
     mkdir -p -m 700 "${GNUPGHOME}"
     gpg --quiet --import "${ffmpeg_dir}/ffmpeg-devel.asc" 2>/dev/null || true
     gpg --quiet --verify "${tarball}.asc" "${tarball}"
+    whisper_version="1.9.5"
+    whisper_tarball="${repo_root}/build/whisper/whisper.cpp-${whisper_version}.tar.gz"
+    if [ ! -f "${whisper_tarball}" ]; then
+        mkdir -p "$(dirname "${whisper_tarball}")"
+        curl -sS --fail --location --retry 5 --retry-all-errors \
+            "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${whisper_version}.tar.gz" \
+            -o "${whisper_tarball}"
+    fi
     image_name="d-cut-appimage-builder:ubuntu-22.04"
     "${container_engine}" build --network=host \
         --file "${repo_root}/scripts/appimage/Dockerfile" \

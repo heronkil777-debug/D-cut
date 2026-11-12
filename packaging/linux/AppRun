@@ -12,6 +12,9 @@ fi
 if [ -x "${HERE}/usr/bin/ffprobe" ]; then
     export D_CUT_FFPROBE="${HERE}/usr/bin/ffprobe"
 fi
+if [ -x "${HERE}/usr/bin/whisper-cli" ]; then
+    export D_CUT_WHISPER="${HERE}/usr/bin/whisper-cli"
+fi
 if [ "${1:-}" = "--cli" ]; then
     shift
     exec "${HERE}/usr/bin/d-cut-cli" "$@"

@@ -7,6 +7,7 @@ mod assets;
 mod export;
 mod files;
 mod playback;
+mod speech;
 mod strings;
 
 use std::{
@@ -357,6 +358,8 @@ struct DcutApp {
     catalog: Arc<Catalog>,
     /// Live slider value while dragging: (clip, effect index, param index, value).
     effect_drag: Option<(u64, usize, usize, f32)>,
+    speech_open: bool,
+    speech_job: Option<speech::SpeechJob>,
 }
 
 impl DcutApp {
@@ -434,6 +437,8 @@ impl DcutApp {
                 Catalog::default()
             })),
             effect_drag: None,
+            speech_open: false,
+            speech_job: None,
         };
         app.hud.visible = std::env::var_os("D_CUT_HUD").is_some();
         app.quality = match std::env::var("D_CUT_PREVIEW").as_deref() {
@@ -2039,6 +2044,13 @@ impl DcutApp {
                         self.open_dialog(Purpose::ImportSubtitles);
                     }
                     if ui
+                        .button("Legendas automáticas…")
+                        .on_hover_text("Whisper local, offline")
+                        .clicked()
+                    {
+                        self.speech_open = true;
+                    }
+                    if ui
                         .button("+ Faixa V")
                         .on_hover_text("Nova faixa de vídeo (por cima)")
                         .clicked()
@@ -2798,6 +2810,93 @@ impl DcutApp {
         self.status = "Exportando…".into();
     }
 
+    fn speech_window(&mut self, ctx: &egui::Context) {
+        if !self.speech_open {
+            return;
+        }
+        let model = editor_speech::MODEL_SMALL;
+        let state = self.speech_job.as_ref().map(speech::SpeechJob::snapshot);
+        let busy = matches!(
+            state,
+            Some(speech::SpeechState::Downloading(_) | speech::SpeechState::Transcribing)
+        );
+        let mut open = true;
+        let mut action = None;
+        egui::Window::new("Legendas automáticas (PT-BR, offline)")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!("Modelo: {} · licença {}", model.name, model.license));
+                if editor_speech::model_ready(&model) {
+                    ui.colored_label(TEAL, "Modelo instalado e verificado.");
+                    if ui.add_enabled(!busy, egui::Button::new("Transcrever a timeline").fill(ACCENT)).clicked() {
+                        action = Some(1);
+                    }
+                } else {
+                    ui.label(format!(
+                        "O modelo ({:.0} MB) não vem no AppImage. O download é opcional, vai para {} e é conferido por SHA-256. Nenhum áudio sai do computador.",
+                        model.bytes as f64 / 1e6,
+                        editor_speech::models_dir().display()
+                    ));
+                    if ui.add_enabled(!busy, egui::Button::new("Baixar modelo")).clicked() {
+                        action = Some(0);
+                    }
+                }
+                match &state {
+                    Some(speech::SpeechState::Downloading(fraction)) => {
+                        ui.add(egui::ProgressBar::new(*fraction as f32).show_percentage());
+                        if ui.button(strings::CANCEL).clicked() {
+                            action = Some(2);
+                        }
+                    }
+                    Some(speech::SpeechState::Transcribing) => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Transcrevendo (CPU, ~1× tempo real no notebook)…");
+                        });
+                    }
+                    Some(speech::SpeechState::Failed(error)) => {
+                        ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    }
+                    _ => {}
+                }
+            });
+        match action {
+            Some(0) => self.speech_job = Some(speech::SpeechJob::download(ctx.clone())),
+            Some(1) => {
+                self.speech_job = Some(speech::SpeechJob::transcribe(
+                    ctx.clone(),
+                    self.project.clone(),
+                ));
+            }
+            Some(2) => {
+                if let Some(job) = &self.speech_job {
+                    job.cancel();
+                }
+            }
+            _ => {}
+        }
+        if let Some(speech::SpeechState::Done(cues)) = state {
+            self.speech_job = None;
+            self.speech_open = false;
+            let count = cues.len();
+            let command = editor_speech::subtitles_command(&self.project, &cues);
+            self.run_edit(
+                Ok(command),
+                &format!("{count} legendas automáticas adicionadas (Ctrl+Z desfaz)"),
+            );
+            return;
+        }
+        if busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        if !open && !busy {
+            self.speech_open = false;
+        }
+    }
+
     fn unsaved_modal(&mut self, ctx: &egui::Context) {
         let Some(action) = self.pending_action else {
             return;
@@ -3071,6 +3170,7 @@ impl eframe::App for DcutApp {
         self.preview_panel(ui);
         self.handle_dialog(&ctx);
         self.export_window(&ctx);
+        self.speech_window(&ctx);
         self.unsaved_modal(&ctx);
         self.update_title(&ctx);
         if self.export_job.is_some() || !self.pending_probes.is_empty() || self.drag.is_some() {

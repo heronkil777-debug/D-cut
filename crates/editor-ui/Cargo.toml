@@ -22,3 +22,4 @@ cpal = "0.18.2"
 editor-export.workspace = true
 editor-text.workspace = true
 editor-effects.workspace = true
+editor-speech.workspace = true

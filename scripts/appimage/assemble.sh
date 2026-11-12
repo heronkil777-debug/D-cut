@@ -73,6 +73,14 @@ else
     printf '%s\n' 'Note: FFmpeg not bundled (provisional build; uses the host ffmpeg).'
 fi
 
+if [ -x /opt/whisper/bin/whisper-cli ]; then
+    install -m 0755 /opt/whisper/bin/whisper-cli "${app_dir}/usr/bin/whisper-cli"
+    mkdir -p "${app_dir}/usr/share/licenses/whisper.cpp"
+    cp /opt/whisper/LICENSE "${app_dir}/usr/share/licenses/whisper.cpp/LICENSE"
+    printf 'whisper.cpp %s, source sha256 %s\n' "$(cat /opt/whisper/VERSION)" \
+        "$(cut -d' ' -f1 /opt/whisper-source.sha256)" > "${app_dir}/usr/share/licenses/whisper.cpp/BUILD.txt"
+fi
+
 mkdir -p "${tools_dir}"
 tool="${tools_dir}/appimagetool-x86_64.AppImage"
 if [ ! -x "${tool}" ]; then

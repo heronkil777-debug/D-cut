@@ -57,3 +57,22 @@ RUN sha256sum /tmp/ffmpeg.tar.xz | tee /opt/ffmpeg-source.sha256 \
     && cp COPYING.GPLv2 COPYING.LGPLv2.1 LICENSE.md /opt/ffmpeg/ \
     && echo "${FFMPEG_VERSION}" > /opt/ffmpeg/VERSION \
     && rm -rf /tmp/ffmpeg-src /tmp/ffmpeg.tar.xz
+
+# ---- whisper.cpp (MIT) for local speech recognition -------------------------------------
+# Portable CPU build: AVX2/FMA/F16C baseline, no OpenMP, static ggml; only whisper-cli ships.
+ARG WHISPER_VERSION=1.9.5
+RUN apt-get update && apt-get install -y --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
+COPY build/whisper/whisper.cpp-${WHISPER_VERSION}.tar.gz /tmp/whisper.tar.gz
+RUN sha256sum /tmp/whisper.tar.gz | tee /opt/whisper-source.sha256 \
+    && mkdir -p /tmp/whisper && tar -xzf /tmp/whisper.tar.gz -C /tmp/whisper --strip-components=1 \
+    && cmake -S /tmp/whisper -B /tmp/whisper/build -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
+        -DWHISPER_SDL2=OFF -DWHISPER_CURL=OFF -DGGML_OPENMP=OFF -DGGML_NATIVE=OFF \
+        -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    && cmake --build /tmp/whisper/build -j"$(nproc)" --target whisper-cli \
+    && mkdir -p /opt/whisper/bin \
+    && cp /tmp/whisper/build/bin/whisper-cli /opt/whisper/bin/ \
+    && cp /tmp/whisper/LICENSE /opt/whisper/LICENSE \
+    && echo "${WHISPER_VERSION}" > /opt/whisper/VERSION \
+    && rm -rf /tmp/whisper /tmp/whisper.tar.gz

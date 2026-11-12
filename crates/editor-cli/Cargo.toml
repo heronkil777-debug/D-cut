@@ -15,3 +15,4 @@ editor-core.workspace = true
 editor-media.workspace = true
 editor-project.workspace = true
 editor-export.workspace = true
+editor-speech.workspace = true

@@ -1,3 +1,4 @@
 # Only the verified FFmpeg tarball is needed in the image build context.
 *
 !build/ffmpeg/ffmpeg-*.tar.xz
+!build/whisper/whisper.cpp-*.tar.gz

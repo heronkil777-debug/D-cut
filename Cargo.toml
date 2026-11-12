@@ -7,6 +7,7 @@ members = [
     "crates/editor-render",
     "crates/editor-effects",
     "crates/editor-export",
+    "crates/editor-speech",
     "crates/editor-text",
     "crates/editor-ui",
     "crates/editor-cli",
@@ -18,6 +19,7 @@ default-members = [
     "crates/editor-render",
     "crates/editor-effects",
     "crates/editor-export",
+    "crates/editor-speech",
     "crates/editor-text",
     "crates/editor-ui",
     "crates/editor-cli",
@@ -38,6 +40,7 @@ editor-render = { path = "crates/editor-render", version = "0.1.0" }
 editor-text = { path = "crates/editor-text", version = "0.1.0" }
 editor-export = { path = "crates/editor-export", version = "0.1.0" }
 editor-effects = { path = "crates/editor-effects", version = "0.1.0" }
+editor-speech = { path = "crates/editor-speech", version = "0.1.0" }
 anyhow = "1"
 eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "wayland", "wgpu", "x11"] }
 egui = "0.37.0"
