@@ -9,5 +9,6 @@ version="$(sed -n 's/^pkgver=//p' "${repo_root}/packaging/aur/PKGBUILD")"
 git -C "${repo_root}" archive --format=tar.gz --prefix="D-cut-${version}/" -o "${work}/d-cut-${version}.tar.gz" HEAD
 sed "s|^source=.*|source=(\"d-cut-${version}.tar.gz\")|" "${repo_root}/packaging/aur/PKGBUILD" > "${work}/PKGBUILD"
 cd "${work}"
-makepkg --force --noconfirm --cleanbuild
+# --nodeps: rustup-installed cargo is not registered with pacman; the tools exist.
+makepkg --force --noconfirm --cleanbuild --nodeps
 ls -l "${work}"/*.pkg.tar.*

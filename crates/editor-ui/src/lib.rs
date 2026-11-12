@@ -310,6 +310,9 @@ fn describe(info: &MediaInfo) -> String {
     parts.join(" · ")
 }
 
+/// Result of the opt-in update check, filled by a worker thread.
+type UpdateSlot = Arc<std::sync::Mutex<Option<Result<Option<String>, String>>>>;
+
 struct DcutApp {
     renderer: Option<FrameRenderer>,
     project: Project,
@@ -371,7 +374,7 @@ struct DcutApp {
     autosaved_generation: u64,
     recoverable: Vec<editor_project::autosave::Recoverable>,
     show_shortcuts: bool,
-    update_result: Option<Arc<std::sync::Mutex<Option<Result<Option<String>, String>>>>>,
+    update_result: Option<UpdateSlot>,
 }
 
 impl DcutApp {

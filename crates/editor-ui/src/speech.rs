@@ -16,8 +16,6 @@ use editor_media::timeline::{TimelineRender, export_audio_wav};
 use editor_speech::{Cue, MODEL_SMALL, download_model, group_words, model_path, transcribe};
 use eframe::egui;
 
-use crate::i18n::tr;
-
 #[derive(Debug, Clone)]
 pub enum SpeechState {
     Idle,
