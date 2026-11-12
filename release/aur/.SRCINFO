@@ -18,6 +18,6 @@ pkgbase = d-cut
 	optdepends = vulkan-intel: Vulkan driver for Intel GPUs
 	optdepends = libva-mesa-driver: hardware H.264 export (VAAPI)
 	source = d-cut-0.1.0.tar.gz::https://github.com/heronkil777-debug/D-cut/archive/refs/tags/v0.1.0.tar.gz
-	sha256sums = SKIP
+	sha256sums = 94b3ab769eb4c19a56c14c08d7a57be4a0f61ccf7f04075f65c3d019d555e4b9
 
 pkgname = d-cut

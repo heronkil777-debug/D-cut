@@ -34,11 +34,19 @@
 - **Fase 7 — AUR:** `release/aur/PKGBUILD` compilado por `scripts/test-pkgbuild.sh` (makepkg local, sem sudo,
   `--nodeps` porque o cargo vem do rustup): pacote **11.376.910 bytes** com `usr/bin/d-cut`, `usr/bin/d-cut-cli`,
   `.desktop`, metainfo, ícone, `LICENSE` e `THIRD_PARTY_LICENSES`.
+- **Publicado no GitHub (v0.1.0):** repositório `github.com/heronkil777-debug/D-cut`, branch único `main`
+  (`master` local publica nele via `remote.origin.push`). CI verde em `498b0b9` (run 43141603483 e 43143616800);
+  tag anotada `v0.1.0` → **Release com `D-cut-x86_64.AppImage` 29.530.616 bytes, `.sha256` e `.zsync`** (101.221 bytes).
+  Artefato publicado baixado de novo e conferido: `sha256sum -c` OK, `--cli --version` → `D-cut 0.1.0` (exit 0),
+  `--cli probe` OK **com um `ffmpeg` falso no PATH** (prova que usa o embutido).
+  GUI do artefato publicado: inicia (log `starting` + `autotest enabled`), mas a confirmação de "closed cleanly"
+  **não foi possível** — a sessão estava bloqueada (`LockedHint=yes`) e o compositor não mapeia a janela; o build
+  local travou igual nas mesmas condições, então é ambiente, não o artefato. Repetir com a sessão desbloqueada.
+- **AUR:** `release/aur/PKGBUILD` com `sha256sums=('94b3ab76…e4b9')` = checksum real do tarball de `v0.1.0`
+  (baixado e conferido). `.SRCINFO` regenerado. **Envio pendente:** exige chave SSH cadastrada em aur.archlinux.org.
 - **Publicação (kit):** `release/` tem o roteiro (`README.md`), release notes, `PKGBUILD` + `.SRCINFO` canônicos,
-  `set-repo.sh` (troca owner/repo em Cargo.toml, metainfo, PKGBUILD e update info), `fill-sha256sums.sh` e
-  `prepare-aur.sh`. O CI embute a update info a partir de `github.repository` e, na tag, cria o GitHub Release com
-  AppImage + `.sha256` + `.zsync`. Scripts testados localmente (repo falso, tarball local, `makepkg`); publicação em si
-  não executada (sem remote/credenciais nesta máquina).
+  `set-repo.sh`, `fill-sha256sums.sh` e `prepare-aur.sh`. O CI embute a update info a partir de `github.repository` e,
+  na tag, cria o GitHub Release com AppImage + `.sha256` + `.zsync`.
 - **Fase 7 — AppImage:** `build/appimage/D-cut-x86_64.AppImage` **29.530.616 bytes**, sha256
   `ec32ccba7df4e604a1747795d950b880c40041f7430e2eca885ceb42390fb1da`, `.zsync` de 101.153 bytes,
   update info embutida (`readelf -p .upd_info` → `gh-releases-zsync|heronkil777-debug|D-cut|latest|D-cut-*x86_64.AppImage.zsync`).
