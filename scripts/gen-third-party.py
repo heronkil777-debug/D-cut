@@ -40,7 +40,16 @@ D-cut itself is licensed AGPL-3.0-or-later (see LICENSE).
    x264, x265, svt-av1 and numactl. Host libraries (libva, libdrm, zlib, glibc, Vulkan, ALSA,
    Wayland/X11) are not bundled. The provisional host build does not bundle FFmpeg.
 
-3. Rust crates
+3. Speech recognition (Phase 5)
+   whisper.cpp v1.9.5 (whisper-cli, bundled in the portable AppImage): MIT License,
+   Copyright (c) 2023-2026 The ggml authors — https://github.com/ggml-org/whisper.cpp
+   (license text shipped at usr/share/licenses/whisper.cpp/LICENSE).
+   Whisper model weights (downloaded only on explicit user request, never bundled):
+   ggml-small.bin from https://huggingface.co/ggerganov/whisper.cpp (license: MIT; original
+   weights by OpenAI, MIT License, Copyright (c) 2022 OpenAI — https://github.com/openai/whisper).
+   SHA-256 1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b, 487601967 bytes.
+
+4. Rust crates
    Generated from Cargo.lock with `cargo metadata` (normal dependencies reachable from the
    workspace for x86_64-unknown-linux-gnu); `cargo deny check licenses` passes with deny.toml.
    Full license texts are in each crate's source distribution.
