@@ -436,6 +436,11 @@ impl DcutApp {
             effect_drag: None,
         };
         app.hud.visible = std::env::var_os("D_CUT_HUD").is_some();
+        app.quality = match std::env::var("D_CUT_PREVIEW").as_deref() {
+            Ok("high") => PreviewQuality::High,
+            Ok("low") => PreviewQuality::Low,
+            _ => PreviewQuality::Medium,
+        };
         for path in startup_files {
             if path
                 .extension()

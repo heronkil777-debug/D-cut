@@ -24,12 +24,14 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxinerama-dev \
             libxcb-render0-dev libxcb-shape0-dev \
             libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libxrandr-dev pkg-config ffmpeg
+            libxrandr-dev pkg-config ffmpeg mesa-vulkan-drivers
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Run tests
+      - name: Run tests (golden images on lavapipe with a larger tolerance)
+        env:
+          D_CUT_GOLDEN_TOLERANCE: "8"
         run: cargo test --workspace
       - name: Run FFmpeg CLI integration workflow
         run: |

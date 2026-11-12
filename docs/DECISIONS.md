@@ -97,3 +97,10 @@ Registros em ordem cronológica. Datas em UTC.
 
 ## 2026-11-11 — Exceção cargo-deny: RUSTSEC-2026-0192 (ttf-parser unmaintained)
 - **Decisão:** ignorar no `deny.toml` o aviso "unmaintained" do `ttf-parser` (vem de cosmic-text → fontdb; não há versão alternativa). O D-cut só lê a fonte embutida (nunca fontes do usuário/sistema), então não há entrada não confiável. Reavaliar quando cosmic-text/fontdb trocarem de parser.
+
+## 2026-11-11 — Fase 4: motor de efeitos
+- **Pacote:** `crates/editor-effects/effects/<id>/{manifest.json, effect.wgsl, golden.rgba}`. O `build.rs` embute todo diretório encontrado; adicionar um pacote não muda código (provado pelo commit `91c76e4`, só arquivos do `invert`).
+- **Contrato do shader:** o pacote define `fn effect_main(uv) -> vec4<f32>`; um prelúdio fixo fornece `src(uv)`, `param(i)` (até 16 parâmetros), `texel()`, vertex shader e bindings. Validação com naga (`naga 30.0.1`, `wgsl-in`, puro Rust) antes de qualquer GPU; manifest inválido → `EffectError` com mensagem (testado: JSON quebrado, id inválido, categoria desconhecida, min ≥ max, default fora da faixa, shader que não compila, sem `effect_main`, id duplicado).
+- **Render:** `editor-render::EffectRunner` (ping-pong, um pipeline por pacote) roda antes da camada de texto, no export (`OffscreenCompositor`) e na prévia (gravado no encoder do egui) — mesma cadeia. Efeitos são por clipe (`Clip.effects`, compatível com projetos antigos); clipe com efeito usa o caminho de export GPU.
+- **Golden:** imagem procedural 96×64, `golden_params` do manifest, referência RGBA crua (sem dependência de PNG). Tolerância `D_CUT_GOLDEN_TOLERANCE` (2 local, 8 no CI/lavapipe); `D_CUT_UPDATE_GOLDEN=1` regenera; folha de contato revisada visualmente antes do commit. O teste também falha se o efeito praticamente não muda a imagem.
+- **Desempenho medido (Vega 8, não a RX 6650 XT):** projeto 1080p30, 2 efeitos (gaussiano + vinheta), prévia 960×540, 63,8 s → 0 frames perdidos, 0 underruns, deriva 2,7 ms.
