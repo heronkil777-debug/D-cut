@@ -25,8 +25,10 @@
 - **Fase 7 — i18n:** catálogo `crates/editor-ui/locales/en.tsv` (148 textos). Teste falha se um `tr("…")` não tiver
   tradução; em execução real `D_CUT_LANG=en` → log `D-cut starting version="0.1.0" language=en`.
 - **Fase 7 — catálogo:** 45 pacotes (29 efeitos + 16 transições), todos com golden test
-  (`cargo test -p editor-render --test golden`); folha de contato dos 30 efeitos conferida visualmente; os 18 novos
-  entraram só como `manifest.json` + `effect.wgsl` (+ golden), sem tocar no motor.
+  (`cargo test -p editor-render --test golden`; cada efeito precisa mudar >100 pixels da imagem de entrada, e as
+  transições também são checadas nos extremos 0/1). Folha de contato dos 30 efeitos gerada em
+  `/tmp/opencode/dcut/grid.png` — **revisão visual ainda não feita** (o agente desta sessão não lê imagens); os 18
+  novos entraram só como `manifest.json` + `effect.wgsl` (+ golden), sem tocar no motor.
 - **Fase 7 — atalhos:** Q/W (cortar início/fim no playhead), ↑/↓ (ponto de edição), F1 (lista), e a lista completa
   na janela "Atalhos"; atalhos desligados quando um campo de texto tem foco (`egui_wants_keyboard_input`).
 - **Fase 7 — AUR:** `packaging/aur/PKGBUILD` compilado por `scripts/test-pkgbuild.sh` (makepkg local, sem sudo,
