@@ -7,9 +7,11 @@ pkgdesc="Local-first open-source video editor (Rust, wgpu, FFmpeg) — no accoun
 arch=('x86_64')
 url="https://github.com/heronkil777-debug/D-cut"
 license=('AGPL-3.0-or-later')
-depends=('ffmpeg' 'alsa-lib' 'vulkan-icd-loader' 'gcc-libs' 'glibc' 'curl')
+depends=('ffmpeg' 'alsa-lib' 'vulkan-icd-loader' 'libxkbcommon' 'gcc-libs' 'glibc' 'curl')
 makedepends=('cargo')
 optdepends=('whisper.cpp: offline automatic subtitles (whisper-cli)'
+            'vulkan-radeon: Vulkan driver for AMD GPUs'
+            'vulkan-intel: Vulkan driver for Intel GPUs'
             'libva-mesa-driver: hardware H.264 export (VAAPI)')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP') # replace with the release tarball checksum when tagging
