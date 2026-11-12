@@ -39,9 +39,9 @@
   tag anotada `v0.1.0` → **Release com `D-cut-x86_64.AppImage` 29.530.616 bytes, `.sha256` e `.zsync`** (101.221 bytes).
   Artefato publicado baixado de novo e conferido: `sha256sum -c` OK, `--cli --version` → `D-cut 0.1.0` (exit 0),
   `--cli probe` OK **com um `ffmpeg` falso no PATH** (prova que usa o embutido).
-  GUI do artefato publicado: inicia (log `starting` + `autotest enabled`), mas a confirmação de "closed cleanly"
-  **não foi possível** — a sessão estava bloqueada (`LockedHint=yes`) e o compositor não mapeia a janela; o build
-  local travou igual nas mesmas condições, então é ambiente, não o artefato. Repetir com a sessão desbloqueada.
+  GUI do artefato publicado: com a sessão desbloqueada, `D_CUT_AUTOTEST=quit:4 --appimage-extract-and-run` abre,
+  loga `D-cut exiting` + `D-cut window closed cleanly` e sai com **exit 0**. (Com a sessão bloqueada o app fica
+  esperando a janela ser mapeada e o teste estoura por timeout — é ambiente, não o artefato.)
 - **AUR:** `release/aur/PKGBUILD` com `sha256sums=('94b3ab76…e4b9')` = checksum real do tarball de `v0.1.0`
   (baixado e conferido). `.SRCINFO` regenerado. **Envio pendente:** exige chave SSH cadastrada em aur.archlinux.org.
 - **Publicação (kit):** `release/` tem o roteiro (`README.md`), release notes, `PKGBUILD` + `.SRCINFO` canônicos,
