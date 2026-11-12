@@ -13,6 +13,8 @@ pub struct Settings {
     pub language: String,
     /// Opt-in: query GitHub releases for a newer version. Off by default (no network).
     pub check_updates: bool,
+    /// Whisper model id from `editor_speech::MODELS` (default `small`).
+    pub speech_model: String,
 }
 
 impl Default for Settings {
@@ -26,6 +28,7 @@ impl Default for Settings {
             }
             .to_owned(),
             check_updates: false,
+            speech_model: editor_speech::MODEL_SMALL.id.to_owned(),
         }
     }
 }
@@ -46,7 +49,15 @@ impl Settings {
         if let Ok(language) = std::env::var("D_CUT_LANG") {
             settings.language = language;
         }
-        settings
+        settings.validated()
+    }
+
+    /// Clamps hand-edited or outdated values to something the app can use.
+    fn validated(mut self) -> Self {
+        if editor_speech::model_by_id(&self.speech_model).is_none() {
+            self.speech_model = editor_speech::MODEL_SMALL.id.to_owned();
+        }
+        self
     }
 
     pub fn save(&self) {
@@ -117,6 +128,38 @@ mod tests {
             .trim_start_matches("https://api.github.com/repos/")
             .trim_end_matches("/releases/latest");
         assert_eq!(slug.split('/').count(), 2, "{slug}");
+    }
+
+    #[test]
+    fn speech_model_round_trips_and_old_files_get_the_default() {
+        let settings = Settings {
+            speech_model: "medium".into(),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).expect("serializes");
+        assert!(json.contains("\"speech_model\":\"medium\""), "{json}");
+        let back: Settings = serde_json::from_str(&json).expect("parses");
+        assert_eq!(back.speech_model, "medium");
+
+        // settings.json written before the field existed must not break loading.
+        let old: Settings =
+            serde_json::from_str(r#"{"language":"en","check_updates":true}"#).expect("parses");
+        assert_eq!(old.speech_model, "small");
+        assert_eq!(old.language, "en");
+    }
+
+    #[test]
+    fn unknown_speech_model_falls_back_to_small() {
+        let settings = Settings {
+            speech_model: "gigante".into(),
+            ..Settings::default()
+        };
+        assert_eq!(settings.validated().speech_model, "small");
+        let kept = Settings {
+            speech_model: "large-v3-turbo".into(),
+            ..Settings::default()
+        };
+        assert_eq!(kept.validated().speech_model, "large-v3-turbo");
     }
 
     #[test]

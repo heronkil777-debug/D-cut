@@ -146,3 +146,5 @@ Qualidade (x264, CPU)	Quality (x264, CPU)
 Rápido (VAAPI, GPU)	Fast (VAAPI, GPU)
 Fechar	Close
 Escolher…	Choose…
+Modelo de transcrição	Transcription model
+Modelos maiores exigem muito mais RAM e são bem mais lentos no processador.	Larger models need much more RAM and are far slower on the CPU.

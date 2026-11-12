@@ -126,3 +126,15 @@ Registros em ordem cronológica. Datas em UTC.
 - **AUR:** `release/aur/PKGBUILD` (compila do fonte; `sha256sums` a preencher na primeira tag) e `scripts/test-pkgbuild.sh`. Testado com `makepkg` local (sem sudo; `--nodeps` porque o cargo veio do rustup e não do pacman).
 - **Templates e biblioteca de músicas (reavaliação):** continuam **fora**. Motivos: licenciamento de músicas/templates exige curadoria e redistribuição com licença compatível (CC0/CC-BY) e aumentaria muito o AppImage; o objetivo (cortar vídeo de celular e exportar) não depende disso. Reabrir se o uso real pedir — preferência por "pacotes de conteúdo" opcionais baixados sob demanda, como os modelos de IA.
 - **Golden test entre drivers (achado do primeiro CI real):** `film-grain` e `scanlines` falhavam no lavapipe (diferença máx. 50 e 153) porque `sin`/`fract`/`step` dependem do arredondamento do driver. Corrigido nos shaders com aritmética inteira (hash u32 para o grão; `row % spacing` para as linhas), não afrouxando a tolerância. Goldens regenerados só para esses dois pacotes; a suíte segue estrita (tolerância 2 local, 8 no CI).
+
+- **Escolha do modelo de transcrição (v0.1.1):** o modelo deixou de ser fixo no código. `editor-speech`
+  expõe `MODELS` com `small` (487 MB, padrão), `medium` (1,5 GB) e `large-v3-turbo` (1,6 GB), cada um com
+  URL, tamanho e SHA-256 oficiais do repositório `ggerganov/whisper.cpp`; a escolha fica em
+  `settings.json` (`speech_model`), validada no carregamento (id desconhecido volta para `small`), e vale
+  para a janela de legendas e para `d-cut-cli --model`.
+- **WER medido (letra cantada, não fala):** no vídeo de teste de 2min52s, com a letra oficial como
+  referência, `small` deu **66,6%** de WER (187 substituições, 12 deleções, 34 inserções em 350 palavras)
+  e `large-v3-turbo` **53,7%** (124/29/35), em 5min20s e 33min36s respectivamente (Ryzen 5 3500U, 6
+  threads; o large estourou a RAM e caiu no swap). Conclusão: nenhum Whisper transcreve letra cantada de
+  forma utilizável, então o app não promete isso; o seletor serve para melhorar fala em áudio difícil.
+  O WER de **fala** em PT-BR segue não medido (critério 5.5).

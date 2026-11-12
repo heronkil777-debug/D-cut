@@ -3201,7 +3201,9 @@ impl DcutApp {
         if !self.speech_open {
             return;
         }
-        let model = editor_speech::MODEL_SMALL;
+        let selected: &'static editor_speech::ModelInfo =
+            editor_speech::model_by_id(&self.settings.speech_model)
+                .unwrap_or(&editor_speech::MODEL_SMALL);
         let state = self.speech_job.as_ref().map(speech::SpeechJob::snapshot);
         let busy = matches!(
             state,
@@ -3215,8 +3217,34 @@ impl DcutApp {
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(format!("Modelo: {} · licença {}", model.name, model.license));
-                if editor_speech::model_ready(&model) {
+                ui.label(tr("Modelo de transcrição"));
+                for model in &editor_speech::MODELS {
+                    let ready = editor_speech::model_ready(model);
+                    let label = format!(
+                        "{} · {:.0} MB{}",
+                        model.name,
+                        model.bytes as f64 / 1e6,
+                        if ready { " · instalado" } else { "" }
+                    );
+                    let clicked = ui
+                        .add_enabled_ui(!busy, |ui| {
+                            ui.selectable_label(selected.id == model.id, label)
+                        })
+                        .inner
+                        .clicked();
+                    if clicked {
+                        self.settings.speech_model = model.id.to_owned();
+                        self.settings.save();
+                    }
+                }
+                ui.separator();
+                ui.label(format!("Licença dos pesos: {}", selected.license));
+                if selected.id != "small" {
+                    ui.small(tr(
+                        "Modelos maiores exigem muito mais RAM e são bem mais lentos no processador.",
+                    ));
+                }
+                if editor_speech::model_ready(selected) {
                     ui.colored_label(TEAL, tr("Modelo instalado e verificado."));
                     if ui.add_enabled(!busy, egui::Button::new(tr("Transcrever a timeline")).fill(ACCENT)).clicked() {
                         action = Some(1);
@@ -3224,7 +3252,7 @@ impl DcutApp {
                 } else {
                     ui.label(format!(
                         "O modelo ({:.0} MB) não vem no AppImage. O download é opcional, vai para {} e é conferido por SHA-256. Nenhum áudio sai do computador.",
-                        model.bytes as f64 / 1e6,
+                        selected.bytes as f64 / 1e6,
                         editor_speech::models_dir().display()
                     ));
                     if ui.add_enabled(!busy, egui::Button::new(tr("Baixar modelo"))).clicked() {
@@ -3251,11 +3279,14 @@ impl DcutApp {
                 }
             });
         match action {
-            Some(0) => self.speech_job = Some(speech::SpeechJob::download(ctx.clone())),
+            Some(0) => {
+                self.speech_job = Some(speech::SpeechJob::download(ctx.clone(), selected));
+            }
             Some(1) => {
                 self.speech_job = Some(speech::SpeechJob::transcribe(
                     ctx.clone(),
                     self.project.clone(),
+                    selected,
                 ));
             }
             Some(2) => {

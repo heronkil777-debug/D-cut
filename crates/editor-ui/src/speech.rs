@@ -13,7 +13,7 @@ use std::{
 
 use editor_core::Project;
 use editor_media::timeline::{TimelineRender, export_audio_wav};
-use editor_speech::{Cue, MODEL_SMALL, download_model, group_words, model_path, transcribe};
+use editor_speech::{Cue, ModelInfo, download_model, group_words, model_path, transcribe};
 use eframe::egui;
 
 #[derive(Debug, Clone)]
@@ -47,10 +47,10 @@ impl SpeechJob {
         Self { state, cancel }
     }
 
-    pub fn download(ctx: egui::Context) -> Self {
+    pub fn download(ctx: egui::Context, model: &'static ModelInfo) -> Self {
         let repaint = ctx.clone();
         Self::spawn(ctx, move |state, cancel| {
-            let result = download_model(&MODEL_SMALL, cancel, |fraction| {
+            let result = download_model(model, cancel, |fraction| {
                 set(state, SpeechState::Downloading(fraction));
                 repaint.request_repaint();
             });
@@ -64,10 +64,10 @@ impl SpeechJob {
         })
     }
 
-    pub fn transcribe(ctx: egui::Context, project: Project) -> Self {
+    pub fn transcribe(ctx: egui::Context, project: Project, model: &'static ModelInfo) -> Self {
         Self::spawn(ctx, move |state, _| {
             set(state, SpeechState::Transcribing);
-            let result = run_transcription(&project);
+            let result = run_transcription(&project, model);
             set(
                 state,
                 match result {
@@ -96,7 +96,7 @@ fn set(state: &Arc<Mutex<SpeechState>>, value: SpeechState) {
     }
 }
 
-fn run_transcription(project: &Project) -> Result<Vec<Cue>, String> {
+fn run_transcription(project: &Project, model: &ModelInfo) -> Result<Vec<Cue>, String> {
     let total = project.duration_frames();
     if total == 0 {
         return Err("a timeline está vazia".into());
@@ -106,7 +106,7 @@ fn run_transcription(project: &Project) -> Result<Vec<Cue>, String> {
         std::env::temp_dir().join(format!("d-cut-speech-{}.wav", std::process::id()));
     export_audio_wav(&job, &wav, 16_000).map_err(|e| e.to_string())?;
     let threads = thread::available_parallelism().map_or(4, |count| count.get());
-    let result = transcribe(&wav, &model_path(&MODEL_SMALL), "pt", threads);
+    let result = transcribe(&wav, &model_path(model), "pt", threads);
     let _ = std::fs::remove_file(&wav);
     let words = result.map_err(|e| e.to_string())?;
     tracing::info!(words = words.len(), "transcription finished");

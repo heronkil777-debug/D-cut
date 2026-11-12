@@ -57,6 +57,8 @@ pub enum SpeechError {
 /// A downloadable model. License is recorded in THIRD_PARTY_LICENSES before any download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelInfo {
+    /// Stable identifier stored in `settings.json` and accepted by `--model`.
+    pub id: &'static str,
     pub name: &'static str,
     pub file: &'static str,
     pub url: &'static str,
@@ -65,8 +67,9 @@ pub struct ModelInfo {
     pub license: &'static str,
 }
 
-/// Whisper small (multilingual), the approved default for PT-BR.
+/// Whisper small (multilingual), the approved default for PT-BR: fast enough for a notebook.
 pub const MODEL_SMALL: ModelInfo = ModelInfo {
+    id: "small",
     name: "Whisper small (multilíngue)",
     file: "ggml-small.bin",
     url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
@@ -74,6 +77,37 @@ pub const MODEL_SMALL: ModelInfo = ModelInfo {
     bytes: 487_601_967,
     license: "MIT (pesos OpenAI Whisper, MIT)",
 };
+
+/// Whisper medium: better on hard audio, but ~3x slower and heavier than small.
+pub const MODEL_MEDIUM: ModelInfo = ModelInfo {
+    id: "medium",
+    name: "Whisper medium (multilíngue)",
+    file: "ggml-medium.bin",
+    url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+    sha256: "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+    bytes: 1_533_763_059,
+    license: "MIT (pesos OpenAI Whisper, MIT)",
+};
+
+/// Whisper large-v3-turbo: highest quality, needs a lot of RAM; very slow on CPU-only machines.
+pub const MODEL_LARGE_V3_TURBO: ModelInfo = ModelInfo {
+    id: "large-v3-turbo",
+    name: "Whisper large-v3-turbo",
+    file: "ggml-large-v3-turbo.bin",
+    url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+    sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+    bytes: 1_624_555_275,
+    license: "MIT (pesos OpenAI Whisper, MIT)",
+};
+
+/// Every model the user can pick, smallest first (default is [`MODEL_SMALL`]).
+pub static MODELS: [ModelInfo; 3] = [MODEL_SMALL, MODEL_MEDIUM, MODEL_LARGE_V3_TURBO];
+
+/// Looks a model up by its settings id. Unknown ids fall back to the default model, so a
+/// hand-edited `settings.json` or an old config never breaks transcription.
+pub fn model_by_id(id: &str) -> Option<&'static ModelInfo> {
+    MODELS.iter().find(|model| model.id == id)
+}
 
 pub fn models_dir() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
@@ -470,5 +504,51 @@ mod command_tests {
         assert_eq!(project, original);
         assert!(history.redo(&mut project).expect("redo"));
         assert_eq!(project.text_overlays.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn model_ids_are_unique_and_resolvable() {
+        let ids: HashSet<&str> = MODELS.iter().map(|model| model.id).collect();
+        assert_eq!(ids.len(), MODELS.len(), "duplicate model id in the catalog");
+        for model in &MODELS {
+            assert_eq!(
+                model_by_id(model.id).map(|found| found.file),
+                Some(model.file)
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_model_id_is_not_silently_mapped() {
+        assert!(model_by_id("").is_none());
+        assert!(model_by_id("tiny").is_none());
+        assert!(model_by_id("Small").is_none());
+    }
+
+    #[test]
+    fn every_model_declares_a_real_checksum_and_size() {
+        for model in &MODELS {
+            assert_eq!(model.sha256.len(), 64, "{}", model.id);
+            assert!(
+                model.sha256.chars().all(|c| c.is_ascii_hexdigit()),
+                "{}",
+                model.id
+            );
+            assert!(model.bytes > 100_000_000, "{}", model.id);
+            assert!(model.file.starts_with("ggml-") && model.file.ends_with(".bin"));
+            assert!(model.url.starts_with("https://"));
+        }
+    }
+
+    #[test]
+    fn default_model_is_the_small_one() {
+        assert_eq!(MODEL_SMALL.id, "small");
+        assert_eq!(MODELS[0], MODEL_SMALL);
     }
 }

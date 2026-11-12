@@ -3,17 +3,22 @@
 D-cut is a local-first, open-source desktop video editor for Linux (Rust + egui/wgpu + FFmpeg),
 targeting Arch Linux and distributed as an AppImage. No account, no cloud, no telemetry.
 
-**Status: early but usable single-timeline editor.** Import video/audio, see real frames in
-the preview, play with audio, split / trim / move / delete / ripple-delete clips with
-undo/redo, save/open projects and export MP4 (H.264 + AAC). See [`docs/STATUS.md`](docs/STATUS.md)
-for what is verified and what is missing (text/subtitles, effects, transitions, keyframes,
-auto-captions are not implemented yet). Full scope: [`docs/BRIEFING.md`](docs/BRIEFING.md).
+**Status: 0.1.0, early but usable.** Import video/audio, edit on a multi-track timeline
+(split, trim, move, ripple delete, undo/redo), composite text and subtitles on the GPU,
+apply 45 effect packages (29 effects + 16 transitions) with keyframes, adjust audio per clip,
+use 540p proxies for heavy footage, autosave every 30 s, generate offline PT-BR captions
+(whisper.cpp; you pick the model) and export MP4 (H.264 + AAC). See
+[`docs/STATUS.md`](docs/STATUS.md) for what is verified and what is still missing.
+Full scope: [`docs/BRIEFING.md`](docs/BRIEFING.md).
 
 ## Requirements
 
-- `ffmpeg` and `ffprobe` on `PATH` (Arch: `pacman -S ffmpeg`). The AppImage does not bundle FFmpeg yet.
+- `ffmpeg` and `ffprobe` on `PATH` for a source build (Arch: `pacman -S ffmpeg`); the AppImage
+  ships its own FFmpeg 7.1.5.
 - A Vulkan driver (Mesa RADV on AMD) for the wgpu preview.
 - Optional: VAAPI (`/dev/dri/renderD128`) for the "Rápido" export profile.
+- Optional: `whisper-cli` (bundled in the AppImage) plus a downloaded Whisper model for automatic
+  captions. Speech works; sung vocals are not reliable in any Whisper model.
 
 ## Run
 

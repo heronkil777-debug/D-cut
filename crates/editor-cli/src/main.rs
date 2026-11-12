@@ -79,14 +79,15 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("render-project") => run_render_project(args),
-        Some("download-model") => run_download_model(),
+        Some("download-model") => run_download_model(args),
+        Some("models") => run_models(),
         Some("bench-preview") => run_bench_preview(args),
         Some("transcribe") => run_transcribe(args),
         Some("export-quality") => run_export(args, false),
         Some("export-vaapi") => run_export(args, true),
         Some("--help" | "-h") | None => {
             println!(
-                "D-cut local project and media tools\n\nUsage:\n  d-cut-cli --version\n  d-cut-cli validate-project <project.dcut>\n  d-cut-cli import-srt <input.srt> <output.dcut> <fps-num> <fps-den>\n  d-cut-cli probe <media-file>\n  d-cut-cli download-model            (opt-in: Whisper small, 487 MB, MIT, SHA-256 verified)\n  d-cut-cli transcribe <project.dcut> [--output out.dcut] [--language pt] [--threads N]\n  d-cut-cli render-project <project.dcut> <output.mp4> [--fast] [--crf N] [--preset NAME] [--qp N] [--vaapi-device PATH] [--gpu-composite]\n  d-cut-cli export-quality <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <crf>\n  d-cut-cli export-vaapi <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <device> <qp>\n\nrender-project uses the same FFmpeg timeline graph as the editor export: H.264 + AAC 48 kHz,\nyuv420p, BT.709, +faststart. --fast uses VAAPI (h264_vaapi); the default uses libx264 CRF 20.\nFFmpeg and ffprobe must be installed (or set D_CUT_FFMPEG / D_CUT_FFPROBE)."
+                "D-cut local project and media tools\n\nUsage:\n  d-cut-cli --version\n  d-cut-cli validate-project <project.dcut>\n  d-cut-cli import-srt <input.srt> <output.dcut> <fps-num> <fps-den>\n  d-cut-cli probe <media-file>\n  d-cut-cli models                     (list Whisper models and which ones are installed)\n  d-cut-cli download-model [--model small|medium|large-v3-turbo]\n  d-cut-cli transcribe <project.dcut> [--output out.dcut] [--language pt] [--model ID] [--threads N]\n  d-cut-cli render-project <project.dcut> <output.mp4> [--fast] [--crf N] [--preset NAME] [--qp N] [--vaapi-device PATH] [--gpu-composite]\n  d-cut-cli export-quality <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <crf>\n  d-cut-cli export-vaapi <input> <output> <start-sec> <duration-sec> <width> <height> <fps-num> <fps-den> <device> <qp>\n\nrender-project uses the same FFmpeg timeline graph as the editor export: H.264 + AAC 48 kHz,\nyuv420p, BT.709, +faststart. --fast uses VAAPI (h264_vaapi); the default uses libx264 CRF 20.\nFFmpeg and ffprobe must be installed (or set D_CUT_FFMPEG / D_CUT_FFPROBE)."
             );
             Ok(())
         }
@@ -293,18 +294,63 @@ fn run_bench_preview(mut args: impl Iterator<Item = String>) -> Result<()> {
     Ok(())
 }
 
-fn run_download_model() -> Result<()> {
-    let model = editor_speech::MODEL_SMALL;
+fn model_by_id(id: &str) -> Result<&'static editor_speech::ModelInfo> {
+    editor_speech::model_by_id(id).ok_or_else(|| {
+        let ids: Vec<&str> = editor_speech::MODELS.iter().map(|model| model.id).collect();
+        anyhow::anyhow!("unknown model {id}; available: {}", ids.join(", "))
+    })
+}
+
+fn parse_model_flag(
+    args: &mut impl Iterator<Item = String>,
+    model: &mut &'static editor_speech::ModelInfo,
+) -> Result<()> {
+    let id = args.next().context("missing model id")?;
+    *model = model_by_id(&id)?;
+    Ok(())
+}
+
+fn run_models() -> Result<()> {
+    println!("{:<16} {:>8}  {:<10} name", "id", "size", "status");
+    for model in &editor_speech::MODELS {
+        let status = if editor_speech::model_ready(model) {
+            "installed"
+        } else {
+            "-"
+        };
+        println!(
+            "{:<16} {:>7.0}M  {:<10} {}",
+            model.id,
+            model.bytes as f64 / 1e6,
+            status,
+            model.name
+        );
+    }
+    println!(
+        "\nModels are stored in {}. Downloads are opt-in and checked with SHA-256.",
+        editor_speech::models_dir().display()
+    );
+    Ok(())
+}
+
+fn run_download_model(mut args: impl Iterator<Item = String>) -> Result<()> {
+    let mut model: &'static editor_speech::ModelInfo = &editor_speech::MODEL_SMALL;
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--model" => parse_model_flag(&mut args, &mut model)?,
+            other => bail!("unknown option {other}"),
+        }
+    }
     println!(
         "Downloading {} ({:.0} MB, license: {}) to {}",
         model.name,
         model.bytes as f64 / 1e6,
         model.license,
-        editor_speech::model_path(&model).display()
+        editor_speech::model_path(model).display()
     );
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut last = None;
-    let path = editor_speech::download_model(&model, &cancel, |fraction| {
+    let path = editor_speech::download_model(model, &cancel, |fraction| {
         let percent = (fraction * 100.0) as u32;
         if last != Some(percent) {
             last = Some(percent);
@@ -327,17 +373,22 @@ fn run_transcribe(mut args: impl Iterator<Item = String>) -> Result<()> {
     let mut output = PathBuf::from(&project_path);
     let mut language = "pt".to_owned();
     let mut threads = std::thread::available_parallelism().map_or(4, |count| count.get());
+    let mut model: &'static editor_speech::ModelInfo = &editor_speech::MODEL_SMALL;
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--output" => output = PathBuf::from(args.next().context("missing output")?),
             "--language" => language = args.next().context("missing language")?,
+            "--model" => parse_model_flag(&mut args, &mut model)?,
             "--threads" => threads = parse_next(&mut args, "threads")?,
             other => bail!("unknown option {other}"),
         }
     }
-    let model = editor_speech::MODEL_SMALL;
-    if !editor_speech::model_ready(&model) {
-        bail!("model not downloaded; run `d-cut-cli download-model` first (opt-in)");
+    if !editor_speech::model_ready(model) {
+        bail!(
+            "model {} not downloaded; run `d-cut-cli download-model --model {}` first (opt-in)",
+            model.id,
+            model.id
+        );
     }
     let mut project = editor_project::load(&project_path)
         .with_context(|| format!("could not load {project_path}"))?;
@@ -350,7 +401,7 @@ fn run_transcribe(mut args: impl Iterator<Item = String>) -> Result<()> {
     editor_media::timeline::export_audio_wav(&job, &wav, 16_000)?;
     let started = std::time::Instant::now();
     let result =
-        editor_speech::transcribe(&wav, &editor_speech::model_path(&model), &language, threads);
+        editor_speech::transcribe(&wav, &editor_speech::model_path(model), &language, threads);
     let _ = std::fs::remove_file(&wav);
     let words = result?;
     let cues = editor_speech::group_words(&words, 42, 3500, 700);

@@ -78,3 +78,12 @@
 2. Quando o usuário enviar 1–2 min de áudio PT-BR, rodar `d-cut-cli transcribe` e reportar o WER real.
 3. Antes de publicar: rodar o CI no GitHub (push), criar a tag `v0.1.0`, preencher `sha256sums` do PKGBUILD e
    enviar ao AUR.
+
+- **Seletor de modelo (v0.1.1):** `editor-speech` tem catálogo `MODELS` (small/medium/large-v3-turbo com
+  SHA-256 e tamanho oficiais), `settings.json` guarda `speech_model` (id inválido → `small`), a janela de
+  legendas lista os modelos com tamanho/estado e baixa o escolhido, e a CLI ganhou `models`,
+  `download-model --model ID` e `transcribe --model ID`. Verificado: `d-cut-cli models` lista installed/-,
+  id inválido falha listando os válidos, e `transcribe --model large-v3-turbo` usou o modelo escolhido
+  (6 s de áudio em 68 s). Testes: 62 (4 do catálogo + 1 de settings).
+- **WER medido em letra cantada:** `small` 66,6% e `large-v3-turbo` 53,7% (vídeo de 2min52s, letra oficial
+  como referência). Nenhum dos dois serve para música; o número de **fala** em PT-BR continua pendente.
