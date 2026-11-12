@@ -2,7 +2,8 @@
 
 - **Data:** 2026-11-11
 - **Produto:** D-cut; caminho D. Branch local `master` (repo recriado do ZIP).
-- **Estado:** editor de corte utilizável + Fase 3 (texto/legendas na GPU, multi-faixa). Fases 1–3 com
+- **Estado:** editor de corte utilizável + Fase 3 (texto/legendas na GPU, multi-faixa) + Fase 4 (motor de efeitos,
+  11 pacotes com golden). Fases 1–4 com
   critérios atendidos localmente; **sem tags `phase-N`** porque o CI do GitHub nunca rodou (sem push).
 - **Divergências aprovadas:** composição de vídeo via grafo FFmpeg (provisória, comparação em DECISIONS);
   texto/legendas compostos no wgpu (`editor-render`) como pede o briefing.
@@ -33,10 +34,11 @@
 - Prévia converte YUV→RGB com BT.601 (desvio leve de cor só na tela; export preserva os valores YUV).
 - Texto: sem fontes do sistema, sem animação/keyframe, sem caixa de fundo; textos sobrepostos na mesma faixa ficam
   desenhados um sobre o outro na timeline. Multi-faixa de vídeo é "faixa de cima cobre" (sem PiP/transparência).
-- Fases 4–7 não iniciadas (efeitos, legenda automática, keyframes, transições, proxies, autosave, i18n completo).
+- Fase 4: desempenho medido só no Vega 8 (prévia 960×540); falta RX 6650 XT e CI com lavapipe.
+- Fases 5–7 não iniciadas: 5 bloqueada (dependência C++ whisper.cpp + áudio do usuário), 6 aguarda aprovação das subfases.
 
 ## Próximo passo
 
 1. Usuário rodar o checklist do relatório no Arch (desktop RX 6650 XT e notebook).
 2. YUV↔RGB no shader (remove o tráfego RGBA e o desvio de cor) e repetir a comparação FFmpeg × wgpu.
-3. Fase 4 (motor de efeitos) após "ok".
+3. Fase 5/6 após as decisões pedidas no relatório da Fase 4.
