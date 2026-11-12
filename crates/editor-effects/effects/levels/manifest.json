@@ -1,0 +1,1 @@
+{"id":"levels","name":"Níveis","category":"correction","params":[{"id":"black","name":"Preto","min":0,"max":0.5,"default":0},{"id":"white","name":"Branco","min":0.5,"max":1,"default":1},{"id":"gamma","name":"Gama","min":0.2,"max":5,"default":1}],"golden_params":[0.1,0.9,1.4]}

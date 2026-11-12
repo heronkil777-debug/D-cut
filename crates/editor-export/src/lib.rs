@@ -13,7 +13,8 @@ use std::{
     time::Instant,
 };
 
-use editor_core::Project;
+use editor_core::{Project, top_video_clip_at};
+use editor_effects::Catalog;
 use editor_media::{
     MediaError,
     timeline::{
@@ -21,7 +22,7 @@ use editor_media::{
         spawn_video_stream,
     },
 };
-use editor_render::{OffscreenCompositor, RenderError, headless_device, wgpu};
+use editor_render::{EffectStep, OffscreenCompositor, RenderError, headless_device, wgpu};
 use editor_text::{TextRenderer, active_overlays};
 use thiserror::Error;
 
@@ -33,8 +34,36 @@ pub enum ExportError {
     Render(#[from] RenderError),
     #[error("the timeline is empty")]
     Empty,
+    #[error(transparent)]
+    Effects(#[from] editor_effects::EffectError),
     #[error("decoder ended early at frame {frame}: {stderr}")]
     ShortDecode { frame: u64, stderr: String },
+}
+
+/// GPU effect steps for the clip visible at `frame` (unknown effect ids are skipped).
+pub fn effect_steps(project: &Project, catalog: &Catalog, frame: u64) -> Vec<EffectStep> {
+    top_video_clip_at(project, frame)
+        .map(|clip| {
+            clip.effects
+                .iter()
+                .filter_map(|effect| {
+                    let package = catalog.get(&effect.effect_id)?.clone();
+                    Some(EffectStep {
+                        params: package.uniform_params(&effect.params),
+                        package,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn uses_effects(project: &Project) -> bool {
+    project
+        .tracks
+        .iter()
+        .flat_map(|track| track.clips.iter())
+        .any(|clip| !clip.effects.is_empty())
 }
 
 /// Which pipeline produced the file.
@@ -73,7 +102,7 @@ pub fn export_project(
     let (width, height) = (project.format.width, project.format.height);
     let job = TimelineRender::from_project(project, 0, total, width, height)?;
     let started = Instant::now();
-    if project.text_overlays.is_empty() && !options.force_gpu {
+    if project.text_overlays.is_empty() && !uses_effects(project) && !options.force_gpu {
         export_timeline(&job, &options.encoder, output, cancel, progress)?;
         return Ok(ExportReport {
             path: ExportPath::FfmpegOnly,
@@ -85,6 +114,7 @@ pub fn export_project(
         Some(pair) => pair,
         None => headless_device()?,
     };
+    let catalog = Catalog::builtin()?;
     let mut compositor = OffscreenCompositor::new(device, queue, width, height);
     let mut text = TextRenderer::new();
     let mut decoder = spawn_video_stream(&job)?;
@@ -111,7 +141,8 @@ pub fn export_project(
             cached = Some((active, layer));
         }
         let overlay = cached.as_ref().and_then(|(_, layer)| layer.as_deref());
-        let composed = compositor.compose(&base, overlay)?;
+        let steps = effect_steps(project, &catalog, frame);
+        let composed = compositor.compose(&base, overlay, &steps)?;
         encoder.write_frame(&composed)?;
         if frame % 5 == 0 {
             let seconds = project.format.frames_to_seconds(frame);

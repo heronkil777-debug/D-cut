@@ -1,0 +1,1 @@
+{"id":"white-balance","name":"Balanço de branco","category":"correction","params":[{"id":"temperature","name":"Temperatura","min":-1,"max":1,"default":0},{"id":"tint","name":"Matiz","min":-1,"max":1,"default":0}],"golden_params":[0.5,-0.3]}

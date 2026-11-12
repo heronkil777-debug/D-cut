@@ -867,6 +867,7 @@ mod tests {
                         source_start_frame: 15,
                         duration_frames: 30,
                         link_group: Some(6),
+                        effects: Vec::new(),
                     }],
                 },
                 Track {
@@ -880,6 +881,7 @@ mod tests {
                         source_start_frame: 15,
                         duration_frames: 30,
                         link_group: Some(6),
+                        effects: Vec::new(),
                     }],
                 },
             ],

@@ -1,0 +1,1 @@
+{"id":"wave","name":"Onda","category":"distortion","params":[{"id":"amplitude","name":"Amplitude","min":0,"max":0.1,"default":0.02},{"id":"frequency","name":"Frequência","min":1,"max":50,"default":10}],"golden_params":[0.03,6]}

@@ -11,3 +11,7 @@ egui-wgpu.workspace = true
 pollster = "1.0.1"
 wgpu = "30.0.1"
 thiserror.workspace = true
+editor-effects.workspace = true
+
+[dev-dependencies]
+editor-effects.workspace = true

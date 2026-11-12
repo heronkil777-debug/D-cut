@@ -1,0 +1,1 @@
+{"id":"gaussian-blur","name":"Desfoque gaussiano","category":"blur","params":[{"id":"sigma","name":"Intensidade (px)","min":0.5,"max":12,"default":3}],"golden_params":[3]}

@@ -1,0 +1,1 @@
+{"id":"box-blur","name":"Desfoque simples","category":"blur","params":[{"id":"radius","name":"Raio (px)","min":0,"max":32,"default":4}],"golden_params":[5]}

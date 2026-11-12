@@ -153,6 +153,7 @@ pub fn add_media_clips_command(
             source_start_frame: 0,
             duration_frames: media.duration_frames,
             link_group,
+            effects: Vec::new(),
         });
         created.push(next_id);
         next_id += 1;
@@ -205,6 +206,7 @@ pub fn split_at_command(
                 source_start_frame: clip.source_start_frame + left_duration,
                 duration_frames: clip.duration_frames - left_duration,
                 link_group: right_group,
+                effects: clip.effects.clone(),
             };
             next_id += 1;
             replacement.push(left);

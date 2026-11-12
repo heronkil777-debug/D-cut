@@ -16,7 +16,7 @@ pub use edit::{
     trim_limits, unlink_command,
 };
 pub use edit::{add_track_command, move_clip_to_track_command};
-pub use plan::{PlanSegment, SegmentSource, audio_plans, video_plan};
+pub use plan::{PlanSegment, SegmentSource, audio_plans, top_video_clip_at, video_plan};
 
 /// The product name shown in project metadata and command-line output.
 pub const PRODUCT_NAME: &str = "D-cut";
@@ -104,8 +104,16 @@ pub enum TrackKind {
     Subtitle,
 }
 
+/// A GPU effect applied to a clip: the catalog id plus parameter values in manifest order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffectInstance {
+    pub effect_id: String,
+    pub params: Vec<f32>,
+}
+
 /// A timeline clip refers to a source asset and a half-open source/timeline frame range.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Clip {
     pub id: u64,
@@ -116,6 +124,9 @@ pub struct Clip {
     /// Clips sharing a link group (for example a video clip and its audio) are edited together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link_group: Option<u64>,
+    /// Effects applied in order (video clips only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<EffectInstance>,
 }
 
 impl Clip {
@@ -131,7 +142,7 @@ impl Clip {
 }
 
 /// A single ordered timeline track.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Track {
     pub id: u64,
@@ -353,6 +364,15 @@ impl Project {
                     .ok_or(CoreError::MissingMedia(clip.media_id))?;
                 if clip.duration_frames == 0 {
                     return Err(CoreError::InvalidClip(clip.id, "duration must be non-zero"));
+                }
+                if clip.effects.iter().any(|effect| {
+                    effect.effect_id.trim().is_empty()
+                        || effect.params.iter().any(|value| !value.is_finite())
+                }) {
+                    return Err(CoreError::InvalidClip(
+                        clip.id,
+                        "effects need an id and finite parameters",
+                    ));
                 }
                 let source_end = clip.source_end_frame().ok_or(CoreError::InvalidClip(
                     clip.id,
@@ -794,6 +814,7 @@ pub fn split_clip_command(
         source_start_frame: right_source,
         duration_frames: clip.duration_frames - left_duration,
         link_group: clip.link_group,
+        effects: Vec::new(),
     };
     replacement[index].duration_frames = left_duration;
     replacement.insert(index + 1, right);
@@ -989,6 +1010,7 @@ mod tests {
                     source_start_frame: 0,
                     duration_frames: 100,
                     link_group: None,
+                    effects: Vec::new(),
                 }],
             }],
             ..Project::default()
@@ -1048,6 +1070,7 @@ mod tests {
             source_start_frame: 0,
             duration_frames: 20,
             link_group: None,
+            effects: Vec::new(),
         });
         let command = ripple_delete_command(&project, 2, 30, 50).expect("range is valid");
         command.apply(&mut project).expect("edit applies");
@@ -1203,6 +1226,7 @@ mod tests {
             source_start_frame: 0,
             duration_frames: 10,
             link_group: None,
+            effects: Vec::new(),
         });
         assert!(project.validate().is_err());
     }

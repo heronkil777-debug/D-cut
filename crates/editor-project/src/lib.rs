@@ -249,6 +249,7 @@ mod tests {
                     source_start_frame: 0,
                     duration_frames: 10,
                     link_group: None,
+                    effects: Vec::new(),
                 }],
             }],
             ..Project::default()

@@ -330,3 +330,87 @@ fn vaapi_export_with_text_works_when_a_render_node_exists() {
     assert_eq!(probe(&output), "h264,720,720,yuv420p,60\naac,94");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn clip_effects_are_rendered_into_the_export() {
+    if !available() {
+        eprintln!("skipping: ffmpeg or GPU adapter unavailable");
+        return;
+    }
+    let dir = dir("effects");
+    let format = ProjectFormat {
+        width: 320,
+        height: 180,
+        ..ProjectFormat::default()
+    };
+    let mut project = project(&dir, format);
+    let colorful = dir.join("colorful.mp4");
+    ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=320x180:r=30:d=2",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:sample_rate=48000:duration=2",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        colorful.to_str().expect("utf-8"),
+    ]);
+    project.media[0].path = colorful.display().to_string();
+    let video = project
+        .tracks
+        .iter_mut()
+        .find(|track| track.kind == TrackKind::Video)
+        .expect("video track");
+    video.clips[0].effects.push(editor_core::EffectInstance {
+        effect_id: "saturation".into(),
+        params: vec![0.0],
+    });
+    let output = dir.join("gray.mp4");
+    let report = export_project(
+        &project,
+        &output,
+        ExportOptions {
+            encoder: ExportEncoder::X264 {
+                crf: 18,
+                preset: "veryfast".into(),
+            },
+            force_gpu: false,
+            device: None,
+        },
+        &Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .expect("export");
+    assert_eq!(report.path, ExportPath::GpuComposite);
+    // Read the U plane of frame 30: a fully desaturated picture has chroma ~128 everywhere.
+    let raw = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(&output)
+        .args([
+            "-vf",
+            "select=eq(n\\,30),format=yuv420p",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ])
+        .output()
+        .expect("ffmpeg");
+    let luma = 320 * 180;
+    let chroma = &raw.stdout[luma..luma + luma / 4];
+    let max_dev = chroma
+        .iter()
+        .map(|value| value.abs_diff(128))
+        .max()
+        .unwrap_or(255);
+    assert!(max_dev <= 4, "chroma deviation {max_dev}");
+    let _ = std::fs::remove_dir_all(dir);
+}

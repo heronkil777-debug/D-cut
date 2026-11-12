@@ -195,6 +195,7 @@ fn edited_timeline_exports_valid_h264_aac_mp4() {
         source_start_frame: 0,
         duration_frames: 15,
         link_group: None,
+        effects: Vec::new(),
     });
     project.validate().expect("valid project");
     let total = project.duration_frames();

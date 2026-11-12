@@ -638,10 +638,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-effects"
+version = "0.1.0"
+dependencies = [
+ "naga",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "editor-export"
 version = "0.1.0"
 dependencies = [
  "editor-core",
+ "editor-effects",
  "editor-media",
  "editor-project",
  "editor-render",
@@ -673,6 +684,7 @@ dependencies = [
 name = "editor-render"
 version = "0.1.0"
 dependencies = [
+ "editor-effects",
  "egui",
  "egui-wgpu",
  "pollster",
@@ -695,6 +707,7 @@ dependencies = [
  "anyhow",
  "cpal",
  "editor-core",
+ "editor-effects",
  "editor-export",
  "editor-media",
  "editor-project",

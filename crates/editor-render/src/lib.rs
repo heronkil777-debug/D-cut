@@ -10,6 +10,10 @@ use egui::{Painter, Rect};
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, RenderState, ScreenDescriptor};
 use thiserror::Error;
 
+mod effects;
+
+use effects::EffectRunner;
+pub use effects::EffectStep;
 pub use wgpu;
 
 #[derive(Debug, Error)]
@@ -236,6 +240,7 @@ pub struct OffscreenCompositor {
     target: wgpu::Texture,
     target_view: wgpu::TextureView,
     readback: wgpu::Buffer,
+    effects: EffectRunner,
     padded_row: u32,
     width: u32,
     height: u32,
@@ -272,6 +277,7 @@ impl OffscreenCompositor {
         empty_overlay.write(&queue, &[0, 0, 0, 0]);
         Self {
             base: Layer::new(&device, format, width, height),
+            effects: EffectRunner::new(&device, format),
             overlay: Layer::new(&device, format, width, height),
             empty_overlay,
             pipeline,
@@ -287,9 +293,19 @@ impl OffscreenCompositor {
     }
 
     /// Composites `overlay` (straight alpha) over `base` and returns the RGBA result.
-    pub fn compose(&mut self, base: &[u8], overlay: Option<&[u8]>) -> Result<Vec<u8>, RenderError> {
+    pub fn compose(
+        &mut self,
+        base: &[u8],
+        overlay: Option<&[u8]>,
+        effects: &[EffectStep],
+    ) -> Result<Vec<u8>, RenderError> {
         check_size(self.width, self.height, base)?;
         self.base.write(&self.queue, base);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("d-cut-export"),
+            });
         let overlay_view = match overlay {
             Some(overlay) => {
                 check_size(self.width, self.height, overlay)?;
@@ -298,14 +314,19 @@ impl OffscreenCompositor {
             }
             None => &self.empty_overlay.view,
         };
-        let bind_group = self
-            .pipeline
-            .bind(&self.device, &self.base.view, overlay_view);
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("d-cut-export"),
-            });
+        let source = self
+            .effects
+            .run(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.base.view,
+                self.width,
+                self.height,
+                effects,
+            )
+            .unwrap_or(&self.base.view);
+        let bind_group = self.pipeline.bind(&self.device, source, overlay_view);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("d-cut-export-pass"),
@@ -401,6 +422,7 @@ impl FrameRenderer {
                 empty_overlay,
                 bind_group: None,
                 bound: (None, None),
+                effects: EffectRunner::new(device, layer_format),
             });
         Self
     }
@@ -412,10 +434,15 @@ impl FrameRenderer {
         rect: Rect,
         frame: Option<PreviewFrame>,
         overlay: Option<PreviewFrame>,
+        effects: Vec<EffectStep>,
     ) {
         painter.add(Callback::new_paint_callback(
             rect,
-            PreviewCallback { frame, overlay },
+            PreviewCallback {
+                frame,
+                overlay,
+                effects,
+            },
         ));
     }
 }
@@ -428,6 +455,7 @@ struct PreviewResources {
     empty_overlay: Layer,
     bind_group: Option<wgpu::BindGroup>,
     bound: (Option<u64>, Option<u64>),
+    effects: EffectRunner,
 }
 
 fn upload(
@@ -459,6 +487,7 @@ fn upload(
 struct PreviewCallback {
     frame: Option<PreviewFrame>,
     overlay: Option<PreviewFrame>,
+    effects: Vec<EffectStep>,
 }
 
 impl CallbackTrait for PreviewCallback {
@@ -467,7 +496,7 @@ impl CallbackTrait for PreviewCallback {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         _screen_descriptor: &ScreenDescriptor,
-        _encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut wgpu::CommandEncoder,
         resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let Some(resources) = resources.get_mut::<PreviewResources>() else {
@@ -487,7 +516,33 @@ impl CallbackTrait for PreviewCallback {
         };
         let uses_overlay = overlay_generation.is_some();
         let bound_overlay = resources.bound.1.is_some();
-        if (rebind || resources.bind_group.is_none() || uses_overlay != bound_overlay)
+        if !self.effects.is_empty()
+            && let Some(base) = &resources.base
+        {
+            // Same effect chain as the export, recorded into egui's encoder before its pass.
+            let overlay_view = match (&resources.overlay, uses_overlay) {
+                (Some(layer), true) => &layer.view,
+                _ => &resources.empty_overlay.view,
+            };
+            if let Some(result) = resources.effects.run(
+                device,
+                queue,
+                encoder,
+                &base.view,
+                frame.width,
+                frame.height,
+                &self.effects,
+            ) {
+                resources.bind_group = Some(resources.pipeline.bind(device, result, overlay_view));
+            }
+            resources.bound = (None, overlay_generation);
+            return Vec::new();
+        }
+        let had_effects = resources.bound.0.is_none() && resources.bind_group.is_some();
+        if (rebind
+            || had_effects
+            || resources.bind_group.is_none()
+            || uses_overlay != bound_overlay)
             && let Some(base) = &resources.base
         {
             {
@@ -547,9 +602,11 @@ mod tests {
                 }
             })
             .collect();
-        let plain = compositor.compose(&base, None).expect("compose");
+        let plain = compositor.compose(&base, None, &[]).expect("compose");
         assert_eq!(&plain[..4], &[200, 40, 10, 255]);
-        let out = compositor.compose(&base, Some(&overlay)).expect("compose");
+        let out = compositor
+            .compose(&base, Some(&overlay), &[])
+            .expect("compose");
         let pixel = |x: u32, y: u32| {
             let index = ((y * width + x) * 4) as usize;
             [out[index], out[index + 1], out[index + 2]]

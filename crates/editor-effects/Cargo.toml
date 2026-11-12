@@ -1,0 +1,12 @@
+[package]
+name = "editor-effects"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+naga = { version = "30.0.1", default-features = false, features = ["wgsl-in"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

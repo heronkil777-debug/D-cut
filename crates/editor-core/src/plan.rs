@@ -103,3 +103,17 @@ pub fn audio_plans(project: &Project, start: u64, end: u64) -> Vec<Vec<PlanSegme
         .map(|track| build_plan(&[track], start, end))
         .collect()
 }
+
+/// The clip shown at `frame` (the first video track with a clip there), if any.
+pub fn top_video_clip_at(project: &Project, frame: u64) -> Option<&crate::Clip> {
+    project
+        .tracks
+        .iter()
+        .filter(|track| track.kind == TrackKind::Video)
+        .find_map(|track| {
+            track.clips.iter().find(|clip| {
+                clip.timeline_start_frame <= frame
+                    && clip.timeline_end_frame().is_some_and(|end| frame < end)
+            })
+        })
+}

@@ -29,8 +29,9 @@ use editor_core::{
     move_command, move_limits, next_free_id, split_at_command, trim_command, trim_limits,
     unlink_command,
 };
+use editor_effects::Catalog;
 use editor_media::{MediaInfo, probe, timeline::TimelineRender};
-use editor_render::{FrameRenderer, PreviewFrame, wgpu};
+use editor_render::{EffectStep, FrameRenderer, PreviewFrame, wgpu};
 use editor_text::{TextRenderer, active_overlays};
 use eframe::egui;
 
@@ -353,6 +354,9 @@ struct DcutApp {
     selected_text: Option<u64>,
     text_draft: Option<TextDraft>,
     text_drag: Option<(u64, f32, i64)>,
+    catalog: Arc<Catalog>,
+    /// Live slider value while dragging: (clip, effect index, param index, value).
+    effect_drag: Option<(u64, usize, usize, f32)>,
 }
 
 impl DcutApp {
@@ -425,6 +429,11 @@ impl DcutApp {
             selected_text: None,
             text_draft: None,
             text_drag: None,
+            catalog: Arc::new(Catalog::builtin().unwrap_or_else(|error| {
+                tracing::error!(%error, "effect catalog failed to load");
+                Catalog::default()
+            })),
+            effect_drag: None,
         };
         app.hud.visible = std::env::var_os("D_CUT_HUD").is_some();
         for path in startup_files {
@@ -1193,6 +1202,144 @@ impl DcutApp {
         });
     }
 
+    /// Effect chain for the frame on screen, including a live slider value while dragging.
+    fn preview_effects(&self) -> Vec<EffectStep> {
+        let shown = self
+            .preview_frame_key
+            .map_or(self.playhead, |(frame, _)| frame);
+        let Some(clip) = editor_core::top_video_clip_at(&self.project, shown) else {
+            return Vec::new();
+        };
+        clip.effects
+            .iter()
+            .enumerate()
+            .filter_map(|(index, effect)| {
+                let package = self.catalog.get(&effect.effect_id)?.clone();
+                let mut values = effect.params.clone();
+                if let Some((clip_id, effect_index, param, value)) = self.effect_drag
+                    && clip_id == clip.id
+                    && effect_index == index
+                    && param < values.len()
+                {
+                    values[param] = value;
+                }
+                Some(EffectStep {
+                    params: package.uniform_params(&values),
+                    package,
+                })
+            })
+            .collect()
+    }
+
+    fn set_clip_effects(
+        &mut self,
+        clip_id: u64,
+        effects: Vec<editor_core::EffectInstance>,
+        message: &str,
+    ) {
+        let Some((track_index, clip_index)) = find_clip(&self.project, clip_id) else {
+            return;
+        };
+        let track = &self.project.tracks[track_index];
+        let mut clips = track.clips.clone();
+        clips[clip_index].effects = effects;
+        let command = EditCommand::ReplaceTrackClips {
+            track_id: track.id,
+            expected: track.clips.clone(),
+            replacement: clips,
+        };
+        self.run_edit(Ok(command), message);
+    }
+
+    fn effects_inspector(&mut self, ui: &mut egui::Ui, clip_id: u64) {
+        let Some((track_index, clip_index)) = find_clip(&self.project, clip_id) else {
+            return;
+        };
+        if self.project.tracks[track_index].kind != TrackKind::Video {
+            return;
+        }
+        let effects = self.project.tracks[track_index].clips[clip_index]
+            .effects
+            .clone();
+        ui.separator();
+        ui.strong("Efeitos (GPU)");
+        let mut add = None;
+        egui::ComboBox::from_id_salt("add-effect")
+            .selected_text("+ Adicionar efeito")
+            .show_ui(ui, |ui| {
+                for package in self.catalog.packages() {
+                    let label = format!(
+                        "{} · {}",
+                        package.manifest.category.label(),
+                        package.manifest.name
+                    );
+                    if ui.selectable_label(false, label).clicked() {
+                        add = Some(package.clone());
+                    }
+                }
+            });
+        if let Some(package) = add {
+            let mut updated = effects.clone();
+            updated.push(editor_core::EffectInstance {
+                effect_id: package.manifest.id.clone(),
+                params: package.defaults(),
+            });
+            self.set_clip_effects(
+                clip_id,
+                updated,
+                &format!("Efeito {} adicionado", package.manifest.name),
+            );
+            return;
+        }
+        let mut commit: Option<Vec<editor_core::EffectInstance>> = None;
+        let mut remove = None;
+        for (index, effect) in effects.iter().enumerate() {
+            let Some(package) = self.catalog.get(&effect.effect_id).cloned() else {
+                ui.colored_label(egui::Color32::LIGHT_RED, format!("? {}", effect.effect_id));
+                continue;
+            };
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&package.manifest.name).strong());
+                if ui.small_button("remover").clicked() {
+                    remove = Some(index);
+                }
+            });
+            for (param_index, param) in package.manifest.params.iter().enumerate() {
+                let stored = effect
+                    .params
+                    .get(param_index)
+                    .copied()
+                    .unwrap_or(param.default);
+                let mut value = match self.effect_drag {
+                    Some((c, e, p, v)) if c == clip_id && e == index && p == param_index => v,
+                    _ => stored,
+                };
+                let response =
+                    ui.add(egui::Slider::new(&mut value, param.min..=param.max).text(&param.name));
+                if response.dragged() {
+                    self.effect_drag = Some((clip_id, index, param_index, value));
+                }
+                if response.drag_stopped() || (response.changed() && !response.dragged()) {
+                    let mut updated = effects.clone();
+                    let params = &mut updated[index].params;
+                    if params.len() <= param_index {
+                        params.resize(param_index + 1, param.default);
+                    }
+                    params[param_index] = value;
+                    commit = Some(updated);
+                    self.effect_drag = None;
+                }
+            }
+        }
+        if let Some(index) = remove {
+            let mut updated = effects.clone();
+            updated.remove(index);
+            self.set_clip_effects(clip_id, updated, "Efeito removido");
+        } else if let Some(updated) = commit {
+            self.set_clip_effects(clip_id, updated, "Efeito ajustado");
+        }
+    }
+
     fn seek(&mut self, frame: u64) {
         self.stop_playback();
         self.playhead = frame.min(self.project.duration_frames());
@@ -1518,6 +1665,7 @@ impl DcutApp {
                 }
             });
         }
+        self.effects_inspector(ui, clip_id);
     }
 
     fn text_inspector(&mut self, ui: &mut egui::Ui) {
@@ -1691,6 +1839,7 @@ impl DcutApp {
                             rect,
                             self.preview_frame.clone(),
                             self.overlay_frame.clone(),
+                            self.preview_effects(),
                         );
                     } else {
                         painter.text(

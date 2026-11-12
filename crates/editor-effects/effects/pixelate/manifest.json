@@ -1,0 +1,1 @@
+{"id":"pixelate","name":"Pixelizar","category":"stylize","params":[{"id":"size","name":"Bloco (px)","min":1,"max":128,"default":12}],"golden_params":[8]}
