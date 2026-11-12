@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::{Clip, CoreError, EditCommand, Project, Track, TrackKind};
+use crate::{Clip, ClipAudio, CoreError, EditCommand, Project, Track, TrackKind};
 
 /// Which edge of a clip a trim operation moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +154,9 @@ pub fn add_media_clips_command(
             duration_frames: media.duration_frames,
             link_group,
             effects: Vec::new(),
+            speed: 1.0,
+            audio: ClipAudio::default(),
+            transition_in: None,
         });
         created.push(next_id);
         next_id += 1;
@@ -192,6 +195,7 @@ pub fn split_at_command(
             let left_duration = frame - clip.timeline_start_frame;
             let mut left = clip.clone();
             left.duration_frames = left_duration;
+            left.audio.fade_out_frames = 0;
             let right_group = clip.link_group.map(|group| {
                 *new_groups.entry(group).or_insert_with(|| {
                     let id = next_id;
@@ -203,10 +207,20 @@ pub fn split_at_command(
                 id: next_id,
                 media_id: clip.media_id,
                 timeline_start_frame: frame,
-                source_start_frame: clip.source_start_frame + left_duration,
+                source_start_frame: clip.source_start_frame + clip.source_frames_for(left_duration),
                 duration_frames: clip.duration_frames - left_duration,
                 link_group: right_group,
-                effects: clip.effects.clone(),
+                effects: clip
+                    .effects
+                    .iter()
+                    .map(|effect| effect.rebased(left_duration as i64))
+                    .collect(),
+                speed: clip.speed,
+                audio: ClipAudio {
+                    fade_in_frames: 0,
+                    ..clip.audio
+                },
+                transition_in: None,
             };
             next_id += 1;
             replacement.push(left);
@@ -312,16 +326,19 @@ pub fn trim_limits(
         let duration = to_i64(clip.duration_frames);
         match edge {
             TrimEdge::Head => {
-                low = low
-                    .max(-to_i64(clip.source_start_frame))
-                    .max(to_i64(previous_end) - start);
+                let speed = f64::from(clip.speed);
+                let source_room = (clip.source_start_frame as f64 / speed).floor() as i64;
+                low = low.max(-source_room).max(to_i64(previous_end) - start);
                 high = high.min(duration - 1);
             }
             TrimEdge::Tail => {
                 let end = start + duration;
-                let source_end = to_i64(clip.source_start_frame) + duration;
+                let source_end = to_i64(clip.source_end_frame().unwrap_or(u64::MAX));
+                let speed = f64::from(clip.speed);
                 low = low.max(1 - duration);
-                high = high.min(to_i64(media.duration_frames) - source_end);
+                high = high.min(
+                    ((to_i64(media.duration_frames) - source_end) as f64 / speed).floor() as i64,
+                );
                 if let Some(next_start) = next_start {
                     high = high.min(to_i64(next_start) - end);
                 }
@@ -349,9 +366,15 @@ pub fn trim_command(
     let ids: HashSet<u64> = linked_clip_ids(project, clip_id).into_iter().collect();
     adjust_clips(project, &ids, |clip| match edge {
         TrimEdge::Head => {
+            let source_delta = (delta as f64 * f64::from(clip.speed)).round() as i64;
             clip.timeline_start_frame = clip.timeline_start_frame.saturating_add_signed(delta);
-            clip.source_start_frame = clip.source_start_frame.saturating_add_signed(delta);
+            clip.source_start_frame = clip.source_start_frame.saturating_add_signed(source_delta);
             clip.duration_frames = clip.duration_frames.saturating_add_signed(-delta);
+            clip.effects = clip
+                .effects
+                .iter()
+                .map(|effect| effect.rebased(delta))
+                .collect();
         }
         TrimEdge::Tail => {
             clip.duration_frames = clip.duration_frames.saturating_add_signed(delta);
@@ -500,5 +523,44 @@ pub fn move_clip_to_track_command(
     Ok(EditCommand::ReplaceTracks {
         expected: project.tracks.clone(),
         replacement: tracks,
+    })
+}
+
+/// Replaces one clip with a modified copy (speed, audio, effects, transition…) as a command.
+pub fn update_clip_command(
+    project: &Project,
+    clip_id: u64,
+    change: impl FnOnce(&mut Clip),
+) -> Result<EditCommand, CoreError> {
+    let (track_index, clip_index) =
+        find_clip(project, clip_id).ok_or(CoreError::MissingClip(clip_id))?;
+    let track = &project.tracks[track_index];
+    let mut clips = track.clips.clone();
+    change(&mut clips[clip_index]);
+    Ok(EditCommand::ReplaceTrackClips {
+        track_id: track.id,
+        expected: track.clips.clone(),
+        replacement: clips,
+    })
+}
+
+/// Sets a clip's speed, keeping its source range: the timeline duration changes. Fails if the
+/// longer clip would overlap the next clip.
+pub fn set_speed_command(
+    project: &Project,
+    clip_id: u64,
+    speed: f32,
+) -> Result<EditCommand, CoreError> {
+    if !speed.is_finite() || !(0.25..=4.0).contains(&speed) {
+        return Err(CoreError::InvalidEdit("speed must be within 0.25..=4"));
+    }
+    let (track_index, clip_index) =
+        find_clip(project, clip_id).ok_or(CoreError::MissingClip(clip_id))?;
+    let clip = &project.tracks[track_index].clips[clip_index];
+    let source = clip.source_frames_for(clip.duration_frames);
+    let duration = ((source as f64 / f64::from(speed)).round() as u64).max(1);
+    update_clip_command(project, clip_id, |clip| {
+        clip.speed = speed;
+        clip.duration_frames = duration;
     })
 }

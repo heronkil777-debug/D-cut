@@ -12,8 +12,16 @@ use thiserror::Error;
 
 mod effects;
 
-use effects::EffectRunner;
-pub use effects::EffectStep;
+use effects::{EffectRunner, TransitionRunner};
+pub use effects::{EffectStep, TransitionStep};
+
+/// A transition to apply: the other clip's frame, which input is "from", and the step.
+pub struct TransitionInput<'a> {
+    pub side: &'a [u8],
+    /// When true the main frame is the outgoing ("from") clip and `side` the incoming one.
+    pub base_is_from: bool,
+    pub step: TransitionStep,
+}
 pub use wgpu;
 
 #[derive(Debug, Error)]
@@ -241,6 +249,8 @@ pub struct OffscreenCompositor {
     target_view: wgpu::TextureView,
     readback: wgpu::Buffer,
     effects: EffectRunner,
+    transitions: TransitionRunner,
+    side: Layer,
     padded_row: u32,
     width: u32,
     height: u32,
@@ -278,6 +288,8 @@ impl OffscreenCompositor {
         Self {
             base: Layer::new(&device, format, width, height),
             effects: EffectRunner::new(&device, format),
+            transitions: TransitionRunner::new(&device, format),
+            side: Layer::new(&device, format, width, height),
             overlay: Layer::new(&device, format, width, height),
             empty_overlay,
             pipeline,
@@ -299,6 +311,17 @@ impl OffscreenCompositor {
         overlay: Option<&[u8]>,
         effects: &[EffectStep],
     ) -> Result<Vec<u8>, RenderError> {
+        self.compose_with(base, overlay, effects, None)
+    }
+
+    /// Like [`Self::compose`], with an optional transition applied before the effects.
+    pub fn compose_with(
+        &mut self,
+        base: &[u8],
+        overlay: Option<&[u8]>,
+        effects: &[EffectStep],
+        transition: Option<TransitionInput<'_>>,
+    ) -> Result<Vec<u8>, RenderError> {
         check_size(self.width, self.height, base)?;
         self.base.write(&self.queue, base);
         let mut encoder = self
@@ -314,18 +337,40 @@ impl OffscreenCompositor {
             }
             None => &self.empty_overlay.view,
         };
+        let mut source = &self.base.view;
+        if let Some(transition) = &transition {
+            check_size(self.width, self.height, transition.side)?;
+            self.side.write(&self.queue, transition.side);
+            let (from, to) = if transition.base_is_from {
+                (&self.base.view, &self.side.view)
+            } else {
+                (&self.side.view, &self.base.view)
+            };
+            if let Some(view) = self.transitions.run(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                from,
+                to,
+                self.width,
+                self.height,
+                &transition.step,
+            ) {
+                source = view;
+            }
+        }
         let source = self
             .effects
             .run(
                 &self.device,
                 &self.queue,
                 &mut encoder,
-                &self.base.view,
+                source,
                 self.width,
                 self.height,
                 effects,
             )
-            .unwrap_or(&self.base.view);
+            .unwrap_or(source);
         let bind_group = self.pipeline.bind(&self.device, source, overlay_view);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -423,6 +468,8 @@ impl FrameRenderer {
                 bind_group: None,
                 bound: (None, None),
                 effects: EffectRunner::new(device, layer_format),
+                transitions: TransitionRunner::new(device, layer_format),
+                side: None,
             });
         Self
     }
@@ -435,6 +482,7 @@ impl FrameRenderer {
         frame: Option<PreviewFrame>,
         overlay: Option<PreviewFrame>,
         effects: Vec<EffectStep>,
+        transition: Option<(PreviewFrame, bool, TransitionStep)>,
     ) {
         painter.add(Callback::new_paint_callback(
             rect,
@@ -442,6 +490,7 @@ impl FrameRenderer {
                 frame,
                 overlay,
                 effects,
+                transition,
             },
         ));
     }
@@ -456,6 +505,8 @@ struct PreviewResources {
     bind_group: Option<wgpu::BindGroup>,
     bound: (Option<u64>, Option<u64>),
     effects: EffectRunner,
+    transitions: TransitionRunner,
+    side: Option<Layer>,
 }
 
 fn upload(
@@ -488,6 +539,7 @@ struct PreviewCallback {
     frame: Option<PreviewFrame>,
     overlay: Option<PreviewFrame>,
     effects: Vec<EffectStep>,
+    transition: Option<(PreviewFrame, bool, TransitionStep)>,
 }
 
 impl CallbackTrait for PreviewCallback {
@@ -516,7 +568,14 @@ impl CallbackTrait for PreviewCallback {
         };
         let uses_overlay = overlay_generation.is_some();
         let bound_overlay = resources.bound.1.is_some();
-        if !self.effects.is_empty()
+        let transition = self
+            .transition
+            .as_ref()
+            .filter(|(side, _, _)| side.width == frame.width && side.height == frame.height);
+        if let Some((side, _, _)) = transition {
+            upload(&mut resources.side, device, queue, format, side);
+        }
+        if (!self.effects.is_empty() || transition.is_some())
             && let Some(base) = &resources.base
         {
             // Same effect chain as the export, recorded into egui's encoder before its pass.
@@ -524,17 +583,39 @@ impl CallbackTrait for PreviewCallback {
                 (Some(layer), true) => &layer.view,
                 _ => &resources.empty_overlay.view,
             };
-            if let Some(result) = resources.effects.run(
-                device,
-                queue,
-                encoder,
-                &base.view,
-                frame.width,
-                frame.height,
-                &self.effects,
-            ) {
-                resources.bind_group = Some(resources.pipeline.bind(device, result, overlay_view));
+            let mut source = &base.view;
+            if let (Some((_, base_is_from, step)), Some(side)) = (transition, &resources.side) {
+                let (from, to) = if *base_is_from {
+                    (&base.view, &side.view)
+                } else {
+                    (&side.view, &base.view)
+                };
+                if let Some(view) = resources.transitions.run(
+                    device,
+                    queue,
+                    encoder,
+                    from,
+                    to,
+                    frame.width,
+                    frame.height,
+                    step,
+                ) {
+                    source = view;
+                }
             }
+            let result = resources
+                .effects
+                .run(
+                    device,
+                    queue,
+                    encoder,
+                    source,
+                    frame.width,
+                    frame.height,
+                    &self.effects,
+                )
+                .unwrap_or(source);
+            resources.bind_group = Some(resources.pipeline.bind(device, result, overlay_view));
             resources.bound = (None, overlay_generation);
             return Vec::new();
         }

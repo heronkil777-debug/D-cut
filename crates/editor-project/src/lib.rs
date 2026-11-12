@@ -250,6 +250,9 @@ mod tests {
                     duration_frames: 10,
                     link_group: None,
                     effects: Vec::new(),
+                    speed: 1.0,
+                    audio: editor_core::ClipAudio::default(),
+                    transition_in: None,
                 }],
             }],
             ..Project::default()

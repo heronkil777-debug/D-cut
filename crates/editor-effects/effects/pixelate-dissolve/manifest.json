@@ -1,0 +1,1 @@
+{"id":"pixelate-dissolve","name":"Pixelizar e dissolver","category":"transition","params":[{"id":"size","name":"Bloco máximo (px)","min":2,"max":96,"default":32}]}

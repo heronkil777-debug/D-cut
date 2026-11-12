@@ -16,7 +16,7 @@ use std::{
     thread,
 };
 
-use editor_core::{PlanSegment, Project, audio_plans, video_plan};
+use editor_core::{PlanSegment, Project, audio_plans, transition_windows, video_plan};
 
 use crate::{MediaError, Rational, ffmpeg_program};
 
@@ -28,6 +28,21 @@ pub const EXPORT_SAMPLE_RATE: u32 = 48_000;
 pub struct RenderSource {
     pub path: PathBuf,
     pub start_seconds: f64,
+    /// Playback speed (source seconds per timeline second).
+    pub speed: f64,
+    pub audio: AudioMix,
+}
+
+/// Per-segment audio processing derived from the clip settings.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AudioMix {
+    pub gain_db: f64,
+    pub fade_in_seconds: f64,
+    pub fade_out_seconds: f64,
+    pub denoise: bool,
+    /// Timeline seconds from the clip start to the segment start.
+    pub offset_seconds: f64,
+    pub clip_seconds: f64,
 }
 
 /// One contiguous timeline range; `None` is black video or silence.
@@ -84,9 +99,23 @@ impl TimelineRender {
                             let media = project.media_asset(source.media_id).ok_or(
                                 MediaError::InvalidExport("clip references missing media"),
                             )?;
+                            let clip = editor_core::find_clip(project, source.clip_id)
+                                .map(|(t, c)| &project.tracks[t].clips[c]);
+                            let audio = clip.map_or_else(AudioMix::default, |clip| AudioMix {
+                                gain_db: f64::from(clip.audio.gain_db),
+                                fade_in_seconds: format
+                                    .frames_to_seconds(clip.audio.fade_in_frames),
+                                fade_out_seconds: format
+                                    .frames_to_seconds(clip.audio.fade_out_frames),
+                                denoise: clip.audio.denoise,
+                                offset_seconds: format.frames_to_seconds(source.clip_offset_frames),
+                                clip_seconds: format.frames_to_seconds(clip.duration_frames),
+                            });
                             Some(RenderSource {
                                 path: PathBuf::from(&media.path),
                                 start_seconds: format.frames_to_seconds(source.source_start_frame),
+                                speed: f64::from(source.speed),
+                                audio,
                             })
                         }
                     };
@@ -109,6 +138,108 @@ impl TimelineRender {
                 .map(convert)
                 .collect::<Result<_, _>>()?,
         })
+    }
+
+    /// The "other" clip inside each transition window, aligned frame by frame with the main
+    /// stream (gaps elsewhere). `None` when no transition intersects `[start, end)`.
+    pub fn transition_side(
+        project: &Project,
+        start: u64,
+        end: u64,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<Self>, MediaError> {
+        let windows: Vec<_> = transition_windows(project)
+            .into_iter()
+            .filter(|window| {
+                window.start_frame < end && window.start_frame + window.duration_frames > start
+            })
+            .collect();
+        if windows.is_empty() {
+            return Ok(None);
+        }
+        let mut job = Self::from_project(project, start, end, width, height)?;
+        job.audio_tracks.clear();
+        let format = project.format;
+        let clip =
+            |id| editor_core::find_clip(project, id).map(|(t, c)| &project.tracks[t].clips[c]);
+        let mut segments = Vec::new();
+        let mut cursor = start;
+        let push_gap = |segments: &mut Vec<RenderSegment>, frames: u64| {
+            if frames > 0 {
+                segments.push(RenderSegment {
+                    duration_frames: frames,
+                    source: None,
+                });
+            }
+        };
+        for window in &windows {
+            let (Some(from), Some(to)) = (clip(window.from_clip), clip(window.to_clip)) else {
+                continue;
+            };
+            let window_end = window.start_frame + window.duration_frames;
+            let a = window.start_frame.max(cursor);
+            let b = window_end.min(end);
+            if a >= b {
+                continue;
+            }
+            push_gap(&mut segments, a - cursor);
+            let media = |id| {
+                project
+                    .media_asset(id)
+                    .ok_or(MediaError::InvalidExport("clip references missing media"))
+            };
+            // Before the cut: the incoming clip's pre-roll.
+            if a < window.cut_frame {
+                let len = window.cut_frame.min(b) - a;
+                let back = to.source_frames_for(window.cut_frame - a);
+                segments.push(RenderSegment {
+                    duration_frames: len,
+                    source: Some(RenderSource {
+                        path: PathBuf::from(&media(to.media_id)?.path),
+                        start_seconds: format
+                            .frames_to_seconds(to.source_start_frame.saturating_sub(back)),
+                        speed: f64::from(to.speed),
+                        audio: AudioMix::default(),
+                    }),
+                });
+            }
+            // After the cut: the outgoing clip's post-roll (held on its last frame if needed).
+            if b > window.cut_frame {
+                let a2 = a.max(window.cut_frame);
+                let asset = media(from.media_id)?;
+                let wanted = from.source_end_frame().unwrap_or(0)
+                    + from.source_frames_for(a2 - window.cut_frame);
+                let last = asset.duration_frames.saturating_sub(2);
+                segments.push(RenderSegment {
+                    duration_frames: b - a2,
+                    source: Some(RenderSource {
+                        path: PathBuf::from(&asset.path),
+                        start_seconds: format.frames_to_seconds(wanted.min(last)),
+                        speed: f64::from(from.speed),
+                        audio: AudioMix::default(),
+                    }),
+                });
+            }
+            cursor = b;
+        }
+        push_gap(&mut segments, end - cursor);
+        job.video = segments;
+        Ok(Some(job))
+    }
+
+    /// Replaces sources with their preview proxies where one is ready (preview only).
+    pub fn with_proxies(mut self) -> Self {
+        let swap = |segment: &mut RenderSegment| {
+            if let Some(source) = &mut segment.source
+                && let Some(proxy) = crate::proxy::proxy_path(&source.path).filter(|p| p.is_file())
+            {
+                source.path = proxy;
+            }
+        };
+        self.video.iter_mut().for_each(swap);
+        self.audio_tracks.iter_mut().flatten().for_each(swap);
+        self
     }
 
     pub fn duration_seconds(&self) -> f64 {
@@ -177,9 +308,10 @@ fn add_video_chain(graph: &mut Graph, job: &TimelineRender, output: VideoOutput)
         let label = format!("v{index}");
         let filter = match &segment.source {
             Some(source) => {
-                let input = graph.add_input(source, seconds + one_frame * 2.0);
+                let speed = source.speed.max(0.01);
+                let input = graph.add_input(source, (seconds + one_frame * 2.0) * speed);
                 format!(
-                    "[{input}:v:0]setpts=PTS-STARTPTS,\
+                    "[{input}:v:0]setpts=(PTS-STARTPTS)/{speed:.6},\
                      scale={w}:{h}:force_original_aspect_ratio=decrease,\
                      pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,\
                      fps={rate},format=yuv420p,\
@@ -220,9 +352,11 @@ fn add_audio_chain(graph: &mut Graph, job: &TimelineRender, sample_rate: u32, sa
             let label = format!("a{track_index}_{index}");
             let filter = match &segment.source {
                 Some(source) => {
-                    let input = graph.add_input(source, seconds + 0.1);
+                    let speed = source.speed.max(0.01);
+                    let input = graph.add_input(source, (seconds + 0.1) * speed);
+                    let processing = audio_processing(source);
                     format!(
-                        "[{input}:a:0]asetpts=PTS-STARTPTS,aresample={sample_rate},{layout},\
+                        "[{input}:a:0]asetpts=PTS-STARTPTS,aresample={sample_rate},{layout}{processing},\
                          apad=whole_len={samples},atrim=end_sample={samples},\
                          asetpts=PTS-STARTPTS[{label}]"
                     )
@@ -264,6 +398,46 @@ fn add_audio_chain(graph: &mut Graph, job: &TimelineRender, sample_rate: u32, sa
             ));
         }
     }
+}
+
+/// atempo chain (each stage limited to 0.5..=2), noise reduction and gain/fade envelope.
+fn audio_processing(source: &RenderSource) -> String {
+    let mut filters = String::new();
+    let mut speed = source.speed;
+    if (speed - 1.0).abs() > 1e-6 {
+        while speed > 2.0 {
+            filters.push_str(",atempo=2.0");
+            speed /= 2.0;
+        }
+        while speed < 0.5 {
+            filters.push_str(",atempo=0.5");
+            speed /= 0.5;
+        }
+        filters.push_str(&format!(",atempo={speed:.6}"));
+    }
+    let mix = &source.audio;
+    if mix.denoise {
+        filters.push_str(",afftdn=nf=-25");
+    }
+    let gain = 10_f64.powf(mix.gain_db / 20.0);
+    let mut factors = vec![format!("{gain:.6}")];
+    let position = format!("(t+{:.6})", mix.offset_seconds);
+    if mix.fade_in_seconds > 0.0 {
+        factors.push(format!(
+            "min(1,max(0,{position}/{:.6}))",
+            mix.fade_in_seconds
+        ));
+    }
+    if mix.fade_out_seconds > 0.0 {
+        factors.push(format!(
+            "min(1,max(0,({:.6}-{position})/{:.6}))",
+            mix.clip_seconds, mix.fade_out_seconds
+        ));
+    }
+    if factors.len() > 1 || (gain - 1.0).abs() > 1e-6 {
+        filters.push_str(&format!(",volume='{}':eval=frame", factors.join("*")));
+    }
+    filters
 }
 
 fn base_command() -> Command {
@@ -899,6 +1073,9 @@ mod tests {
                         duration_frames: 30,
                         link_group: Some(6),
                         effects: Vec::new(),
+                        speed: 1.0,
+                        audio: editor_core::ClipAudio::default(),
+                        transition_in: None,
                     }],
                 },
                 Track {
@@ -913,6 +1090,9 @@ mod tests {
                         duration_frames: 30,
                         link_group: Some(6),
                         effects: Vec::new(),
+                        speed: 1.0,
+                        audio: editor_core::ClipAudio::default(),
+                        transition_in: None,
                     }],
                 },
             ],

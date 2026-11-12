@@ -16,3 +16,6 @@ editor-media.workspace = true
 editor-project.workspace = true
 editor-export.workspace = true
 editor-speech.workspace = true
+editor-render.workspace = true
+editor-effects.workspace = true
+editor-text.workspace = true

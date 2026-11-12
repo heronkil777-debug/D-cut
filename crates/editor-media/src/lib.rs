@@ -12,6 +12,7 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
+pub mod proxy;
 pub mod timeline;
 
 /// FFmpeg executable: `D_CUT_FFMPEG` (set by the AppImage when it bundles FFmpeg) or `ffmpeg`.

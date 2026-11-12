@@ -360,6 +360,9 @@ struct DcutApp {
     effect_drag: Option<(u64, usize, usize, f32)>,
     speech_open: bool,
     speech_job: Option<speech::SpeechJob>,
+    preview_side: Option<PreviewFrame>,
+    proxies: assets::ProxyQueue,
+    use_proxies: bool,
 }
 
 impl DcutApp {
@@ -439,6 +442,9 @@ impl DcutApp {
             effect_drag: None,
             speech_open: false,
             speech_job: None,
+            preview_side: None,
+            proxies: assets::ProxyQueue::new(context.egui_ctx.clone()),
+            use_proxies: std::env::var_os("D_CUT_NO_PROXIES").is_none(),
         };
         app.hud.visible = std::env::var_os("D_CUT_HUD").is_some();
         app.quality = match std::env::var("D_CUT_PREVIEW").as_deref() {
@@ -757,6 +763,7 @@ impl DcutApp {
             self.pending_probes.remove(&path);
             match (kind, result) {
                 (ProbeKind::Refresh(media_id), Ok(info)) => {
+                    self.request_proxy(media_id, &path, &info);
                     self.assets.request(media_id, path, &info);
                     self.media_info.insert(media_id, info);
                 }
@@ -805,6 +812,7 @@ impl DcutApp {
             format!("Importado {name}")
         };
         if self.run_edit(Ok(EditCommand::Batch(commands)), &message) {
+            self.request_proxy(id, &path, &info);
             self.assets.request(id, path, &info);
             self.media_info.insert(id, info);
             self.selected_media = Some(id);
@@ -812,6 +820,21 @@ impl DcutApp {
                 self.add_to_timeline(id);
                 self.status = message;
             }
+        }
+    }
+
+    fn request_proxy(&mut self, media_id: u64, path: &Path, info: &MediaInfo) {
+        if self.use_proxies && info.video.is_some() {
+            self.proxies.request(media_id, path.to_owned());
+        }
+    }
+
+    /// Preview jobs read proxies when enabled (exports always use the originals).
+    fn preview_job(&self, job: TimelineRender) -> TimelineRender {
+        if self.use_proxies {
+            job.with_proxies()
+        } else {
+            job
         }
     }
 
@@ -1099,7 +1122,14 @@ impl DcutApp {
                 TimelineRender::from_project(&self.project, self.playhead, duration, 2, 2).ok()
             })
             .flatten();
-        let playback = Playback::start(ctx.clone(), video_job, audio_job, self.fps());
+        let side_job =
+            TimelineRender::transition_side(&self.project, self.playhead, duration, width, height)
+                .ok()
+                .flatten();
+        let video_job = self.preview_job(video_job);
+        let side_job = side_job.map(|job| self.preview_job(job));
+        let audio_job = audio_job.map(|job| self.preview_job(job));
+        let playback = Playback::start(ctx.clone(), video_job, side_job, audio_job, self.fps());
         self.status = match (&playback.audio_error, has_audio) {
             (Some(error), _) => format!("Reproduzindo sem som ({error})"),
             (None, true) => "Reproduzindo (áudio é o relógio)".into(),
@@ -1118,6 +1148,29 @@ impl DcutApp {
         });
     }
 
+    fn set_side(&mut self, width: u32, height: u32, side: Option<Vec<u8>>) {
+        self.preview_side = side.map(|rgba| {
+            self.frame_counter += 1;
+            PreviewFrame {
+                width,
+                height,
+                rgba: Arc::new(rgba),
+                generation: self.frame_counter,
+            }
+        });
+    }
+
+    /// Transition for the frame on screen (needs the matching side frame).
+    fn preview_transition(&self) -> Option<(PreviewFrame, bool, editor_render::TransitionStep)> {
+        let side = self.preview_side.clone()?;
+        let shown = self
+            .preview_frame_key
+            .map_or(self.playhead, |(frame, _)| frame);
+        let windows = editor_core::transition_windows(&self.project);
+        let (step, base_is_from) = editor_export::transition_at(&windows, &self.catalog, shown)?;
+        Some((side, base_is_from, step))
+    }
+
     fn update_preview(&mut self, ctx: &egui::Context) {
         let (width, height) = self.preview_size();
         if let Some(playback) = &mut self.playback {
@@ -1126,6 +1179,7 @@ impl DcutApp {
             if let Some((frame_index, rgba)) = tick.frame {
                 self.preview_frame_key = Some((frame_index, self.generation));
                 self.show_frame(width, height, rgba);
+                self.set_side(width, height, tick.side);
             }
             if tick.finished {
                 self.stop_playback();
@@ -1142,6 +1196,7 @@ impl DcutApp {
                 {
                     self.preview_frame_key = Some((result.key.frame, result.key.generation));
                     self.show_frame(result.key.width, result.key.height, rgba);
+                    self.set_side(result.key.width, result.key.height, result.side);
                 }
                 Ok(_) => {}
                 Err(error) => {
@@ -1173,7 +1228,20 @@ impl DcutApp {
         };
         if self.scrub.last_requested != Some(key) {
             match TimelineRender::from_project(&self.project, frame, frame + 1, width, height) {
-                Ok(job) => self.scrub.request(key, job),
+                Ok(job) => {
+                    let side = TimelineRender::transition_side(
+                        &self.project,
+                        frame,
+                        frame + 1,
+                        width,
+                        height,
+                    )
+                    .ok()
+                    .flatten();
+                    let job = self.preview_job(job);
+                    let side = side.map(|job| self.preview_job(job));
+                    self.scrub.request(key, job, side);
+                }
                 Err(error) => self.status = format!("Falha na prévia: {error}"),
             }
         }
@@ -1220,12 +1288,13 @@ impl DcutApp {
         let Some(clip) = editor_core::top_video_clip_at(&self.project, shown) else {
             return Vec::new();
         };
+        let clip_frame = shown.saturating_sub(clip.timeline_start_frame);
         clip.effects
             .iter()
             .enumerate()
             .filter_map(|(index, effect)| {
                 let package = self.catalog.get(&effect.effect_id)?.clone();
-                let mut values = effect.params.clone();
+                let mut values = effect.values_at(clip_frame);
                 if let Some((clip_id, effect_index, param, value)) = self.effect_drag
                     && clip_id == clip.id
                     && effect_index == index
@@ -1261,6 +1330,135 @@ impl DcutApp {
         self.run_edit(Ok(command), message);
     }
 
+    fn clip_controls(&mut self, ui: &mut egui::Ui, clip_id: u64) {
+        let Some((track_index, clip_index)) = find_clip(&self.project, clip_id) else {
+            return;
+        };
+        let kind = self.project.tracks[track_index].kind;
+        let clip = self.project.tracks[track_index].clips[clip_index].clone();
+        let fps = self.fps();
+        ui.separator();
+        // Speed (applied to the clip and its linked partner so audio stays in sync).
+        let mut speed_choice = None;
+        egui::ComboBox::from_label("Velocidade")
+            .selected_text(format!("{:.2}×", clip.speed))
+            .show_ui(ui, |ui| {
+                for speed in [0.25_f32, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0] {
+                    if ui
+                        .selectable_label((clip.speed - speed).abs() < 1e-3, format!("{speed}×"))
+                        .clicked()
+                    {
+                        speed_choice = Some(speed);
+                    }
+                }
+            });
+        if let Some(speed) = speed_choice {
+            let commands: Result<Vec<_>, _> = linked_clip_ids(&self.project, clip_id)
+                .into_iter()
+                .map(|id| editor_core::set_speed_command(&self.project, id, speed))
+                .collect();
+            self.run_edit(
+                commands.map(EditCommand::Batch),
+                &format!("Velocidade {speed}×"),
+            );
+            return;
+        }
+        if kind == TrackKind::Video {
+            let mut choice: Option<Option<String>> = None;
+            let current = clip.transition_in.as_ref().map(|t| t.package.clone());
+            let label = current
+                .as_ref()
+                .and_then(|id| self.catalog.get(id))
+                .map_or_else(
+                    || "nenhuma".to_owned(),
+                    |package| package.manifest.name.clone(),
+                );
+            egui::ComboBox::from_label("Transição de entrada")
+                .selected_text(label)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(current.is_none(), "nenhuma").clicked() {
+                        choice = Some(None);
+                    }
+                    for package in self.catalog.transitions() {
+                        let selected = current.as_deref() == Some(package.manifest.id.as_str());
+                        if ui
+                            .selectable_label(selected, &package.manifest.name)
+                            .clicked()
+                        {
+                            choice = Some(Some(package.manifest.id.clone()));
+                        }
+                    }
+                });
+            if let Some(transition) = &clip.transition_in {
+                let mut seconds = transition.duration_frames as f64 / fps;
+                let response =
+                    ui.add(egui::Slider::new(&mut seconds, 0.1..=3.0).text("Duração (s)"));
+                if response.drag_stopped() || (response.changed() && !response.dragged()) {
+                    let frames = ((seconds * fps).round() as u64).max(2);
+                    let package = transition.package.clone();
+                    let command =
+                        editor_core::update_clip_command(&self.project, clip_id, |clip| {
+                            clip.transition_in = Some(editor_core::TransitionIn {
+                                package,
+                                duration_frames: frames,
+                            });
+                        });
+                    self.run_edit(command, "Duração da transição ajustada");
+                    return;
+                }
+                ui.small("Precisa de um clipe imediatamente antes, na mesma faixa.");
+            }
+            if let Some(choice) = choice {
+                let frames = clip
+                    .transition_in
+                    .as_ref()
+                    .map_or((fps * 0.8).round() as u64, |t| t.duration_frames);
+                let command = editor_core::update_clip_command(&self.project, clip_id, |clip| {
+                    clip.transition_in = choice.map(|package| editor_core::TransitionIn {
+                        package,
+                        duration_frames: frames,
+                    });
+                });
+                self.run_edit(command, "Transição atualizada");
+                return;
+            }
+        }
+        if kind == TrackKind::Audio {
+            let mut audio = clip.audio;
+            let mut fade_in = audio.fade_in_frames as f64 / fps;
+            let mut fade_out = audio.fade_out_frames as f64 / fps;
+            let mut commit = false;
+            let gain =
+                ui.add(egui::Slider::new(&mut audio.gain_db, -40.0..=12.0).text("Volume (dB)"));
+            commit |= gain.drag_stopped() || (gain.changed() && !gain.dragged());
+            ui.horizontal(|ui| {
+                ui.label("Fade in (s)");
+                let response = ui.add(
+                    egui::DragValue::new(&mut fade_in)
+                        .speed(0.05)
+                        .range(0.0..=10.0),
+                );
+                commit |= response.drag_stopped() || response.lost_focus();
+                ui.label("out");
+                let response = ui.add(
+                    egui::DragValue::new(&mut fade_out)
+                        .speed(0.05)
+                        .range(0.0..=10.0),
+                );
+                commit |= response.drag_stopped() || response.lost_focus();
+            });
+            commit |= ui.checkbox(&mut audio.denoise, "Reduzir ruído").changed();
+            if commit {
+                audio.fade_in_frames = (fade_in * fps).round() as u64;
+                audio.fade_out_frames = (fade_out * fps).round() as u64;
+                let command = editor_core::update_clip_command(&self.project, clip_id, |clip| {
+                    clip.audio = audio
+                });
+                self.run_edit(command, "Áudio do clipe ajustado");
+            }
+        }
+    }
+
     fn effects_inspector(&mut self, ui: &mut egui::Ui, clip_id: u64) {
         let Some((track_index, clip_index)) = find_clip(&self.project, clip_id) else {
             return;
@@ -1277,7 +1475,7 @@ impl DcutApp {
         egui::ComboBox::from_id_salt("add-effect")
             .selected_text("+ Adicionar efeito")
             .show_ui(ui, |ui| {
-                for package in self.catalog.packages() {
+                for package in self.catalog.effects() {
                     let label = format!(
                         "{} · {}",
                         package.manifest.category.label(),
@@ -1293,6 +1491,7 @@ impl DcutApp {
             updated.push(editor_core::EffectInstance {
                 effect_id: package.manifest.id.clone(),
                 params: package.defaults(),
+                keyframes: Vec::new(),
             });
             self.set_clip_effects(
                 clip_id,
@@ -1303,6 +1502,10 @@ impl DcutApp {
         }
         let mut commit: Option<Vec<editor_core::EffectInstance>> = None;
         let mut remove = None;
+        let mut key_request: Option<(usize, usize, f32)> = None;
+        let mut clear_request: Option<(usize, usize)> = None;
+        let clip_start = self.project.tracks[track_index].clips[clip_index].timeline_start_frame;
+        let clip_frame = self.playhead.saturating_sub(clip_start);
         for (index, effect) in effects.iter().enumerate() {
             let Some(package) = self.catalog.get(&effect.effect_id).cloned() else {
                 ui.colored_label(egui::Color32::LIGHT_RED, format!("? {}", effect.effect_id));
@@ -1324,8 +1527,29 @@ impl DcutApp {
                     Some((c, e, p, v)) if c == clip_id && e == index && p == param_index => v,
                     _ => stored,
                 };
-                let response =
-                    ui.add(egui::Slider::new(&mut value, param.min..=param.max).text(&param.name));
+                let animated = effect
+                    .keyframes
+                    .iter()
+                    .any(|keys| keys.param == param_index);
+                let response = ui
+                    .horizontal(|ui| {
+                        let response = ui.add(
+                            egui::Slider::new(&mut value, param.min..=param.max).text(&param.name),
+                        );
+                        let key_label = if animated { "◆ chave" } else { "◇ chave" };
+                        if ui
+                            .small_button(key_label)
+                            .on_hover_text("Grava uma chave no playhead (animação)")
+                            .clicked()
+                        {
+                            key_request = Some((index, param_index, value));
+                        }
+                        if animated && ui.small_button("limpar").clicked() {
+                            clear_request = Some((index, param_index));
+                        }
+                        response
+                    })
+                    .inner;
                 if response.dragged() {
                     self.effect_drag = Some((clip_id, index, param_index, value));
                 }
@@ -1341,7 +1565,36 @@ impl DcutApp {
                 }
             }
         }
-        if let Some(index) = remove {
+        if let Some((index, param, value)) = key_request {
+            let mut updated = effects.clone();
+            let keys = &mut updated[index].keyframes;
+            let position = keys.iter().position(|keys| keys.param == param);
+            let entry = match position {
+                Some(position) => &mut keys[position],
+                None => {
+                    keys.push(editor_core::ParamKeyframes {
+                        param,
+                        curve: editor_core::AnimationCurve {
+                            keyframes: Vec::new(),
+                        },
+                    });
+                    let last = keys.len() - 1;
+                    &mut keys[last]
+                }
+            };
+            entry.curve.keyframes.retain(|key| key.frame != clip_frame);
+            entry.curve.keyframes.push(editor_core::Keyframe {
+                frame: clip_frame,
+                value,
+                interpolation_to_next: editor_core::Interpolation::Smooth,
+            });
+            entry.curve.keyframes.sort_by_key(|key| key.frame);
+            self.set_clip_effects(clip_id, updated, "Chave gravada no playhead");
+        } else if let Some((index, param)) = clear_request {
+            let mut updated = effects.clone();
+            updated[index].keyframes.retain(|keys| keys.param != param);
+            self.set_clip_effects(clip_id, updated, "Animação removida");
+        } else if let Some(index) = remove {
             let mut updated = effects.clone();
             updated.remove(index);
             self.set_clip_effects(clip_id, updated, "Efeito removido");
@@ -1589,7 +1842,30 @@ impl DcutApp {
                     let (width, height) = self.preview_size();
                     ui.small(format!("Prévia em {width}×{height}"));
                     ui.separator();
-                    ui.checkbox(&mut self.snapping, "Ímã (snap) na timeline");
+                                        ui.checkbox(&mut self.snapping, "Ímã (snap) na timeline");
+                    if ui
+                        .checkbox(&mut self.use_proxies, "Usar proxies na prévia (540p)")
+                        .on_hover_text("Cópias leves geradas em segundo plano; o export usa sempre os originais")
+                        .changed()
+                    {
+                        self.stop_playback();
+                        self.generation += 1;
+                        if self.use_proxies {
+                            let media: Vec<(u64, PathBuf)> = self
+                                .project
+                                .media
+                                .iter()
+                                .filter(|media| media.has_video)
+                                .map(|media| (media.id, PathBuf::from(&media.path)))
+                                .collect();
+                            for (id, path) in media {
+                                self.proxies.request(id, path);
+                            }
+                        }
+                    }
+                    if !self.proxies.pending.is_empty() {
+                        ui.small(format!("Gerando {} proxy(s)…", self.proxies.pending.len()));
+                    }
                     ui.add_space(6.0);
                     ui.small(strings::SHORTCUTS);
                 });
@@ -1675,6 +1951,7 @@ impl DcutApp {
                 }
             });
         }
+        self.clip_controls(ui, clip_id);
         self.effects_inspector(ui, clip_id);
     }
 
@@ -1850,6 +2127,7 @@ impl DcutApp {
                             self.preview_frame.clone(),
                             self.overlay_frame.clone(),
                             self.preview_effects(),
+                            self.preview_transition(),
                         );
                     } else {
                         painter.text(
@@ -3146,6 +3424,13 @@ impl eframe::App for DcutApp {
         self.run_autotest(&ctx);
         self.receive_probes();
         self.assets.poll(&ctx);
+        let before = self.proxies.ready.len();
+        for error in self.proxies.poll() {
+            self.status = format!("Falha ao gerar proxy: {error}");
+        }
+        if self.proxies.ready.len() != before && self.use_proxies && self.playback.is_none() {
+            self.generation += 1;
+        }
         self.receive_dropped_files(&ctx);
         self.shortcuts(&ctx);
         if self.layout_frames < 30 {

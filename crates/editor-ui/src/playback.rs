@@ -33,18 +33,21 @@ pub struct FrameKey {
 pub struct ScrubResult {
     pub key: FrameKey,
     pub frame: Result<Vec<u8>, String>,
+    /// Frame of the other clip when the playhead is inside a transition window.
+    pub side: Option<Vec<u8>>,
 }
 
 /// Single-frame renderer for a paused playhead. Only the newest request is rendered.
 pub struct ScrubDecoder {
-    requests: Sender<(FrameKey, TimelineRender)>,
+    requests: Sender<(FrameKey, TimelineRender, Option<TimelineRender>)>,
     results: Receiver<ScrubResult>,
     pub last_requested: Option<FrameKey>,
 }
 
 impl ScrubDecoder {
     pub fn new(ctx: egui::Context) -> Self {
-        let (request_tx, request_rx) = mpsc::channel::<(FrameKey, TimelineRender)>();
+        let (request_tx, request_rx) =
+            mpsc::channel::<(FrameKey, TimelineRender, Option<TimelineRender>)>();
         let (result_tx, result_rx) = mpsc::channel();
         thread::Builder::new()
             .name("d-cut-scrub".into())
@@ -54,9 +57,10 @@ impl ScrubDecoder {
                     while let Ok(newer) = request_rx.try_recv() {
                         request = newer;
                     }
-                    let (key, job) = request;
+                    let (key, job, side_job) = request;
                     let frame = render_frame(&job).map_err(|error| error.to_string());
-                    if result_tx.send(ScrubResult { key, frame }).is_err() {
+                    let side = side_job.and_then(|side| render_frame(&side).ok());
+                    if result_tx.send(ScrubResult { key, frame, side }).is_err() {
                         break;
                     }
                     ctx.request_repaint();
@@ -71,12 +75,12 @@ impl ScrubDecoder {
         }
     }
 
-    pub fn request(&mut self, key: FrameKey, job: TimelineRender) {
+    pub fn request(&mut self, key: FrameKey, job: TimelineRender, side: Option<TimelineRender>) {
         if self.last_requested == Some(key) {
             return;
         }
         self.last_requested = Some(key);
-        let _ = self.requests.send((key, job));
+        let _ = self.requests.send((key, job, side));
     }
 
     pub fn poll(&self) -> Option<ScrubResult> {
@@ -299,6 +303,53 @@ fn decode_audio(job: TimelineRender, sample_rate: u32, shared: &AudioShared, sto
     shared.finished.store(true, Ordering::Relaxed);
 }
 
+fn resident_mb() -> f64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<f64>().ok())
+        .map_or(0.0, |pages| pages * 4096.0 / 1_048_576.0)
+}
+
+/// Decodes a timeline stream on its own thread; frames are tagged with timeline indices.
+fn spawn_decoder(
+    ctx: egui::Context,
+    job: TimelineRender,
+    stop: Arc<AtomicBool>,
+    name: &str,
+) -> Receiver<(u64, Vec<u8>)> {
+    let (frame_tx, frame_rx): (SyncSender<(u64, Vec<u8>)>, _) = mpsc::sync_channel(4);
+    let spawned = thread::Builder::new().name(name.into()).spawn(move || {
+        let mut stream = match spawn_video_stream(&job) {
+            Ok(stream) => stream,
+            Err(error) => {
+                tracing::error!(%error, "preview decoder failed to start");
+                return;
+            }
+        };
+        let mut frame_index = job.start_frame;
+        while !stop.load(Ordering::Relaxed) {
+            match stream.next_frame() {
+                Ok(Some(data)) => {
+                    if frame_tx.send((frame_index, data)).is_err() {
+                        break;
+                    }
+                    ctx.request_repaint();
+                    frame_index += 1;
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::error!(%error, "preview decode error");
+                    break;
+                }
+            }
+        }
+    });
+    if let Err(error) = spawned {
+        tracing::error!(%error, "could not start decoder thread");
+    }
+    frame_rx
+}
+
 /// Statistics shown by the debug HUD and logged at the end of playback.
 #[derive(Debug, Clone, Copy)]
 pub struct PlaybackStats {
@@ -364,6 +415,8 @@ pub struct Playback {
     pub end_frame: u64,
     fps: f64,
     frames: Receiver<(u64, Vec<u8>)>,
+    side_frames: Option<Receiver<(u64, Vec<u8>)>>,
+    side_pending: Option<(u64, Vec<u8>)>,
     stop: Arc<AtomicBool>,
     pending: Option<(u64, Vec<u8>)>,
     pub audio: Option<AudioOutput>,
@@ -379,6 +432,8 @@ pub struct PlaybackTick {
     pub clock_frame: u64,
     /// New frame to display, if any.
     pub frame: Option<(u64, Vec<u8>)>,
+    /// Matching frame of the transition side stream, if any.
+    pub side: Option<Vec<u8>>,
     pub finished: bool,
 }
 
@@ -386,45 +441,21 @@ impl Playback {
     pub fn start(
         ctx: egui::Context,
         video_job: TimelineRender,
+        side_job: Option<TimelineRender>,
         audio_job: Option<TimelineRender>,
         fps: f64,
     ) -> Self {
         let start_frame = video_job.start_frame;
         let end_frame = video_job.start_frame + video_job.total_frames;
-        let (frame_tx, frame_rx): (SyncSender<(u64, Vec<u8>)>, _) = mpsc::sync_channel(4);
         let stop = Arc::new(AtomicBool::new(false));
-        let worker_stop = Arc::clone(&stop);
-        let spawned = thread::Builder::new()
-            .name("d-cut-video-decode".into())
-            .spawn(move || {
-                let mut stream = match spawn_video_stream(&video_job) {
-                    Ok(stream) => stream,
-                    Err(error) => {
-                        tracing::error!(%error, "video preview failed to start");
-                        return;
-                    }
-                };
-                let mut frame_index = video_job.start_frame;
-                while !worker_stop.load(Ordering::Relaxed) {
-                    match stream.next_frame() {
-                        Ok(Some(data)) => {
-                            if frame_tx.send((frame_index, data)).is_err() {
-                                break;
-                            }
-                            ctx.request_repaint();
-                            frame_index += 1;
-                        }
-                        Ok(None) => break,
-                        Err(error) => {
-                            tracing::error!(%error, "video preview decode error");
-                            break;
-                        }
-                    }
-                }
-            });
-        if let Err(error) = spawned {
-            tracing::error!(%error, "could not start video decode thread");
-        }
+        let frame_rx = spawn_decoder(
+            ctx.clone(),
+            video_job,
+            Arc::clone(&stop),
+            "d-cut-video-decode",
+        );
+        let side_frames = side_job
+            .map(|job| spawn_decoder(ctx.clone(), job, Arc::clone(&stop), "d-cut-side-decode"));
         let (audio, audio_error) = match audio_job.map(AudioOutput::open) {
             Some(Ok(audio)) => (Some(audio), None),
             Some(Err(error)) => {
@@ -438,6 +469,8 @@ impl Playback {
             end_frame,
             fps,
             frames: frame_rx,
+            side_frames,
+            side_pending: None,
             stop,
             pending: None,
             audio,
@@ -523,12 +556,33 @@ impl Playback {
             self.stats.underruns = audio.underruns();
             self.stats.audio_buffer_ms = audio.buffered_seconds() * 1000.0;
         }
+        let side = newest.as_ref().and_then(|(index, _)| self.side_for(*index));
         let finished = clock_frame >= self.end_frame
             || (self.video_finished && self.pending.is_none() && self.audio.is_none());
         PlaybackTick {
             clock_frame: clock_frame.min(self.end_frame),
             frame: newest,
+            side,
             finished,
+        }
+    }
+
+    /// Side-stream frame with the same timeline index (older ones are discarded).
+    fn side_for(&mut self, index: u64) -> Option<Vec<u8>> {
+        let receiver = self.side_frames.as_ref()?;
+        loop {
+            let candidate = match self.side_pending.take() {
+                Some(frame) => frame,
+                None => receiver.try_recv().ok()?,
+            };
+            match candidate.0.cmp(&index) {
+                std::cmp::Ordering::Less => {}
+                std::cmp::Ordering::Equal => return Some(candidate.1),
+                std::cmp::Ordering::Greater => {
+                    self.side_pending = Some(candidate);
+                    return None;
+                }
+            }
         }
     }
 
@@ -552,6 +606,7 @@ impl Playback {
             mean_offset_ms = mean,
             max_abs_offset_ms = self.stats.max_abs_offset_ms,
             drift_ms = self.stats.drift_ms(),
+            rss_mb = resident_mb(),
             "playback stopped"
         );
     }

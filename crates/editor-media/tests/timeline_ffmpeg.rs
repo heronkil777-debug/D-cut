@@ -196,6 +196,9 @@ fn edited_timeline_exports_valid_h264_aac_mp4() {
         duration_frames: 15,
         link_group: None,
         effects: Vec::new(),
+        speed: 1.0,
+        audio: editor_core::ClipAudio::default(),
+        transition_in: None,
     });
     project.validate().expect("valid project");
     let total = project.duration_frames();
@@ -433,5 +436,50 @@ fn rotated_phone_clip_and_vfr_clip_render_with_correct_geometry_and_length() {
         ["540", "960", &total.to_string()],
         "{counted}"
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn proxies_are_generated_and_preview_frames_match_the_original() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg/ffprobe not installed");
+        return;
+    }
+    let dir = work_dir("proxy");
+    let source = landscape_fixture(&dir);
+    let proxy = editor_media::proxy::generate_proxy(&source, 360).expect("proxy");
+    let info = probe(&proxy).expect("probe proxy");
+    let video = info.video.expect("video");
+    assert_eq!((video.width, video.height), (640, 360));
+    assert!(info.audio.is_some());
+    let format = ProjectFormat {
+        width: 1280,
+        height: 720,
+        ..ProjectFormat::default()
+    };
+    let mut project = empty_project(format);
+    project.media.push(asset_for(&source, 10, format));
+    let (command, _) = add_media_clips_command(&project, 10).expect("add");
+    command.apply(&mut project).expect("applies");
+    for frame in [7_u64, 61, 100] {
+        let original =
+            TimelineRender::from_project(&project, frame, frame + 1, 320, 180).expect("job");
+        let proxied = original.clone().with_proxies();
+        assert_ne!(original, proxied, "proxy path substituted");
+        let a = render_frame(&original).expect("original frame");
+        let b = render_frame(&proxied).expect("proxy frame");
+        let neighbor = TimelineRender::from_project(&project, frame + 2, frame + 3, 320, 180)
+            .map(|job| render_frame(&job.with_proxies()).expect("neighbor"))
+            .expect("job");
+        assert!(
+            mean_abs_diff(&a, &b) < mean_abs_diff(&a, &neighbor),
+            "frame {frame}"
+        );
+        assert!(
+            mean_abs_diff(&a, &b) < 6.0,
+            "frame {frame}: proxy too different"
+        );
+    }
+    let _ = std::fs::remove_file(proxy);
     let _ = std::fs::remove_dir_all(dir);
 }

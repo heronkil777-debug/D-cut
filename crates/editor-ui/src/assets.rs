@@ -135,3 +135,63 @@ impl AssetCache {
         self.waveforms.clear();
     }
 }
+
+/// Background proxy generation (one transcode at a time, never on the UI thread).
+pub struct ProxyQueue {
+    jobs: Sender<(u64, PathBuf)>,
+    results: Receiver<(u64, Result<PathBuf, String>)>,
+    pub pending: HashSet<u64>,
+    pub ready: HashSet<u64>,
+}
+
+impl ProxyQueue {
+    pub fn new(ctx: egui::Context) -> Self {
+        let (job_tx, job_rx) = mpsc::channel::<(u64, PathBuf)>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let _ = thread::Builder::new()
+            .name("d-cut-proxies".into())
+            .spawn(move || {
+                while let Ok((media_id, path)) = job_rx.recv() {
+                    let result = editor_media::proxy::generate_proxy(&path, 540)
+                        .map_err(|error| error.to_string());
+                    if done_tx.send((media_id, result)).is_err() {
+                        break;
+                    }
+                    ctx.request_repaint();
+                }
+            });
+        Self {
+            jobs: job_tx,
+            results: done_rx,
+            pending: HashSet::new(),
+            ready: HashSet::new(),
+        }
+    }
+
+    pub fn request(&mut self, media_id: u64, path: PathBuf) {
+        if editor_media::proxy::proxy_ready(&path) {
+            self.ready.insert(media_id);
+            return;
+        }
+        if self.pending.insert(media_id) {
+            let _ = self.jobs.send((media_id, path));
+        }
+    }
+
+    pub fn poll(&mut self) -> Vec<String> {
+        let mut errors = Vec::new();
+        for (media_id, result) in self.results.try_iter() {
+            self.pending.remove(&media_id);
+            match result {
+                Ok(_) => {
+                    self.ready.insert(media_id);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "proxy generation failed");
+                    errors.push(error);
+                }
+            }
+        }
+        errors
+    }
+}

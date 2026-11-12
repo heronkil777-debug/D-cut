@@ -16,7 +16,11 @@ pub use edit::{
     trim_limits, unlink_command,
 };
 pub use edit::{add_track_command, move_clip_to_track_command};
-pub use plan::{PlanSegment, SegmentSource, audio_plans, top_video_clip_at, video_plan};
+pub use edit::{set_speed_command, update_clip_command};
+pub use plan::{
+    PlanSegment, SegmentSource, TransitionWindow, audio_plans, top_video_clip_at,
+    transition_windows, video_plan,
+};
 
 /// The product name shown in project metadata and command-line output.
 pub const PRODUCT_NAME: &str = "D-cut";
@@ -110,6 +114,87 @@ pub enum TrackKind {
 pub struct EffectInstance {
     pub effect_id: String,
     pub params: Vec<f32>,
+    /// Optional keyframes per parameter; frames are relative to the clip's timeline start.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keyframes: Vec<ParamKeyframes>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParamKeyframes {
+    pub param: usize,
+    pub curve: AnimationCurve,
+}
+
+impl EffectInstance {
+    /// Parameter values at `clip_frame` (keyframed parameters override the static value).
+    pub fn values_at(&self, clip_frame: u64) -> Vec<f32> {
+        let mut values = self.params.clone();
+        for keys in &self.keyframes {
+            if let Some(value) = keys.curve.evaluate(clip_frame) {
+                if values.len() <= keys.param {
+                    values.resize(keys.param + 1, value);
+                }
+                values[keys.param] = value;
+            }
+        }
+        values
+    }
+
+    /// Shifts keyframes so that clip frame `offset` becomes frame 0 (after a split or head
+    /// trim), inserting the evaluated value at the new start. Negative offsets push keys later.
+    pub fn rebased(&self, offset: i64) -> Self {
+        let mut effect = self.clone();
+        for keys in &mut effect.keyframes {
+            keys.curve = keys.curve.rebased(offset);
+        }
+        effect
+    }
+}
+
+/// Transition from the previous adjacent clip on the same track into this clip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransitionIn {
+    /// Transition package id from the effect catalog.
+    pub package: String,
+    pub duration_frames: u64,
+}
+
+/// Per-clip audio settings.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipAudio {
+    pub gain_db: f32,
+    pub fade_in_frames: u64,
+    pub fade_out_frames: u64,
+    /// FFT noise reduction (FFmpeg `afftdn`).
+    pub denoise: bool,
+}
+
+impl Default for ClipAudio {
+    fn default() -> Self {
+        Self {
+            gain_db: 0.0,
+            fade_in_frames: 0,
+            fade_out_frames: 0,
+            denoise: false,
+        }
+    }
+}
+
+impl ClipAudio {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+fn default_speed() -> f32 {
+    1.0
+}
+
+fn is_unit_speed(speed: &f32) -> bool {
+    (*speed - 1.0).abs() < f32::EPSILON
 }
 
 /// A timeline clip refers to a source asset and a half-open source/timeline frame range.
@@ -127,6 +212,13 @@ pub struct Clip {
     /// Effects applied in order (video clips only).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<EffectInstance>,
+    /// Constant playback speed (0.25..=4.0). Source frames used = duration × speed.
+    #[serde(default = "default_speed", skip_serializing_if = "is_unit_speed")]
+    pub speed: f32,
+    #[serde(default, skip_serializing_if = "ClipAudio::is_default")]
+    pub audio: ClipAudio,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_in: Option<TransitionIn>,
 }
 
 impl Clip {
@@ -135,9 +227,15 @@ impl Clip {
         self.timeline_start_frame.checked_add(self.duration_frames)
     }
 
+    /// Source frames consumed by `timeline_frames` of this clip at its speed.
+    pub fn source_frames_for(&self, timeline_frames: u64) -> u64 {
+        (timeline_frames as f64 * f64::from(self.speed)).round() as u64
+    }
+
     /// Exclusive end frame in the source asset.
     pub fn source_end_frame(&self) -> Option<u64> {
-        self.source_start_frame.checked_add(self.duration_frames)
+        self.source_start_frame
+            .checked_add(self.source_frames_for(self.duration_frames))
     }
 }
 
@@ -199,6 +297,50 @@ impl AnimationCurve {
             }
         }
         None
+    }
+
+    /// Curve re-expressed so that frame `offset` of the old curve is frame 0 of the new one.
+    pub fn rebased(&self, offset: i64) -> Self {
+        if offset <= 0 {
+            let shift = offset.unsigned_abs();
+            return Self {
+                keyframes: self
+                    .keyframes
+                    .iter()
+                    .map(|key| Keyframe {
+                        frame: key.frame + shift,
+                        ..*key
+                    })
+                    .collect(),
+            };
+        }
+        let offset = offset as u64;
+        let mut keyframes = Vec::new();
+        if let Some(value) = self.evaluate(offset)
+            && !self.keyframes.iter().any(|key| key.frame == offset)
+        {
+            let interpolation = self
+                .keyframes
+                .iter()
+                .rev()
+                .find(|key| key.frame < offset)
+                .map_or(Interpolation::Linear, |key| key.interpolation_to_next);
+            keyframes.push(Keyframe {
+                frame: 0,
+                value,
+                interpolation_to_next: interpolation,
+            });
+        }
+        keyframes.extend(
+            self.keyframes
+                .iter()
+                .filter(|key| key.frame >= offset)
+                .map(|key| Keyframe {
+                    frame: key.frame - offset,
+                    ..*key
+                }),
+        );
+        Self { keyframes }
     }
 
     fn validate(&self) -> bool {
@@ -364,6 +506,18 @@ impl Project {
                     .ok_or(CoreError::MissingMedia(clip.media_id))?;
                 if clip.duration_frames == 0 {
                     return Err(CoreError::InvalidClip(clip.id, "duration must be non-zero"));
+                }
+                if !clip.speed.is_finite() || !(0.25..=4.0).contains(&clip.speed) {
+                    return Err(CoreError::InvalidClip(
+                        clip.id,
+                        "speed must be within 0.25..=4",
+                    ));
+                }
+                if !clip.audio.gain_db.is_finite() || clip.audio.gain_db.abs() > 60.0 {
+                    return Err(CoreError::InvalidClip(
+                        clip.id,
+                        "gain must be within ±60 dB",
+                    ));
                 }
                 if clip.effects.iter().any(|effect| {
                     effect.effect_id.trim().is_empty()
@@ -815,6 +969,9 @@ pub fn split_clip_command(
         duration_frames: clip.duration_frames - left_duration,
         link_group: clip.link_group,
         effects: Vec::new(),
+        speed: 1.0,
+        audio: ClipAudio::default(),
+        transition_in: None,
     };
     replacement[index].duration_frames = left_duration;
     replacement.insert(index + 1, right);
@@ -1011,6 +1168,9 @@ mod tests {
                     duration_frames: 100,
                     link_group: None,
                     effects: Vec::new(),
+                    speed: 1.0,
+                    audio: ClipAudio::default(),
+                    transition_in: None,
                 }],
             }],
             ..Project::default()
@@ -1071,6 +1231,9 @@ mod tests {
             duration_frames: 20,
             link_group: None,
             effects: Vec::new(),
+            speed: 1.0,
+            audio: ClipAudio::default(),
+            transition_in: None,
         });
         let command = ripple_delete_command(&project, 2, 30, 50).expect("range is valid");
         command.apply(&mut project).expect("edit applies");
@@ -1227,6 +1390,9 @@ mod tests {
             duration_frames: 10,
             link_group: None,
             effects: Vec::new(),
+            speed: 1.0,
+            audio: ClipAudio::default(),
+            transition_in: None,
         });
         assert!(project.validate().is_err());
     }

@@ -658,10 +658,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor-core",
+ "editor-effects",
  "editor-export",
  "editor-media",
  "editor-project",
+ "editor-render",
  "editor-speech",
+ "editor-text",
 ]
 
 [[package]]

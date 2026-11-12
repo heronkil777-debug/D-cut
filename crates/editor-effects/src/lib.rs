@@ -15,6 +15,7 @@ include!(concat!(env!("OUT_DIR"), "/builtin.rs"));
 /// Maximum parameters per effect (four vec4 uniforms).
 pub const MAX_PARAMS: usize = 16;
 const PRELUDE: &str = include_str!("prelude.wgsl");
+const TRANSITION_PRELUDE: &str = include_str!("transition_prelude.wgsl");
 
 #[derive(Debug, Error, PartialEq)]
 pub enum EffectError {
@@ -36,6 +37,8 @@ pub enum Category {
     Distortion,
     Stylize,
     Correction,
+    /// Two-input packages defining `transition_main` (from/to frames + progress).
+    Transition,
 }
 
 impl Category {
@@ -46,6 +49,7 @@ impl Category {
             Self::Distortion => "Distorção",
             Self::Stylize => "Estilização",
             Self::Correction => "Correção",
+            Self::Transition => "Transição",
         }
     }
 }
@@ -166,7 +170,18 @@ pub fn load_package(manifest_json: &str, shader: &str) -> Result<EffectPackage, 
             ));
         }
     }
-    let composed = format!("{PRELUDE}{shader}");
+    let (prelude, entry) = if manifest.category == Category::Transition {
+        (TRANSITION_PRELUDE, "transition_main")
+    } else {
+        (PRELUDE, "effect_main")
+    };
+    if !shader.contains(&format!("fn {entry}")) {
+        return Err(EffectError::Shader {
+            id: manifest.id.clone(),
+            message: format!("missing fn {entry}(uv: vec2<f32>) -> vec4<f32>"),
+        });
+    }
+    let composed = format!("{prelude}{shader}");
     validate_shader(&manifest.id, &composed)?;
     Ok(EffectPackage {
         manifest,
@@ -176,20 +191,16 @@ pub fn load_package(manifest_json: &str, shader: &str) -> Result<EffectPackage, 
 
 /// Parses and validates WGSL with naga, requiring the `effect_main` entry function.
 pub fn validate_shader(id: &str, source: &str) -> Result<(), EffectError> {
-    if !source.contains("fn effect_main") {
-        return Err(EffectError::Shader {
-            id: id.to_owned(),
-            message: "missing fn effect_main(uv: vec2<f32>) -> vec4<f32>".into(),
-        });
-    }
     let module = naga::front::wgsl::parse_str(source).map_err(|error| EffectError::Shader {
         id: id.to_owned(),
         message: error.emit_to_string(source),
     })?;
-    let has_main = module
-        .functions
-        .iter()
-        .any(|(_, function)| function.name.as_deref() == Some("effect_main"));
+    let has_main = module.functions.iter().any(|(_, function)| {
+        matches!(
+            function.name.as_deref(),
+            Some("effect_main" | "transition_main")
+        )
+    });
     if !has_main {
         return Err(EffectError::Shader {
             id: id.to_owned(),
@@ -240,6 +251,19 @@ impl Catalog {
         &self.packages
     }
 
+    /// Single-input effects (no transitions).
+    pub fn effects(&self) -> impl Iterator<Item = &Arc<EffectPackage>> {
+        self.packages
+            .iter()
+            .filter(|package| package.manifest.category != Category::Transition)
+    }
+
+    pub fn transitions(&self) -> impl Iterator<Item = &Arc<EffectPackage>> {
+        self.packages
+            .iter()
+            .filter(|package| package.manifest.category == Category::Transition)
+    }
+
     pub fn get(&self, id: &str) -> Option<&Arc<EffectPackage>> {
         self.packages
             .iter()
@@ -273,6 +297,7 @@ mod tests {
                 .count();
             assert!(count >= 2, "{category:?} has {count}");
         }
+        assert!(catalog.transitions().count() >= 15);
     }
 
     #[test]

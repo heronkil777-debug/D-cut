@@ -13,7 +13,7 @@ use std::{
     time::Instant,
 };
 
-use editor_core::{Project, top_video_clip_at};
+use editor_core::{Project, TransitionWindow, top_video_clip_at, transition_windows};
 use editor_effects::Catalog;
 use editor_media::{
     MediaError,
@@ -22,7 +22,10 @@ use editor_media::{
         spawn_video_stream,
     },
 };
-use editor_render::{EffectStep, OffscreenCompositor, RenderError, headless_device, wgpu};
+use editor_render::{
+    EffectStep, OffscreenCompositor, RenderError, TransitionInput, TransitionStep, headless_device,
+    wgpu,
+};
 use editor_text::{TextRenderer, active_overlays};
 use thiserror::Error;
 
@@ -44,18 +47,37 @@ pub enum ExportError {
 pub fn effect_steps(project: &Project, catalog: &Catalog, frame: u64) -> Vec<EffectStep> {
     top_video_clip_at(project, frame)
         .map(|clip| {
+            let clip_frame = frame.saturating_sub(clip.timeline_start_frame);
             clip.effects
                 .iter()
                 .filter_map(|effect| {
                     let package = catalog.get(&effect.effect_id)?.clone();
                     Some(EffectStep {
-                        params: package.uniform_params(&effect.params),
+                        params: package.uniform_params(&effect.values_at(clip_frame)),
                         package,
                     })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The transition active at `frame`: (step, main frame is the outgoing clip).
+pub fn transition_at(
+    windows: &[TransitionWindow],
+    catalog: &Catalog,
+    frame: u64,
+) -> Option<(TransitionStep, bool)> {
+    let window = windows.iter().find(|window| window.contains(frame))?;
+    let package = catalog.get(&window.package)?.clone();
+    Some((
+        TransitionStep {
+            params: package.uniform_params(&package.defaults()),
+            progress: window.progress(frame),
+            package,
+        },
+        frame < window.cut_frame,
+    ))
 }
 
 fn uses_effects(project: &Project) -> bool {
@@ -102,7 +124,12 @@ pub fn export_project(
     let (width, height) = (project.format.width, project.format.height);
     let job = TimelineRender::from_project(project, 0, total, width, height)?;
     let started = Instant::now();
-    if project.text_overlays.is_empty() && !uses_effects(project) && !options.force_gpu {
+    let windows = transition_windows(project);
+    if project.text_overlays.is_empty()
+        && !uses_effects(project)
+        && windows.is_empty()
+        && !options.force_gpu
+    {
         export_timeline(&job, &options.encoder, output, cancel, progress)?;
         return Ok(ExportReport {
             path: ExportPath::FfmpegOnly,
@@ -118,6 +145,11 @@ pub fn export_project(
     let mut compositor = OffscreenCompositor::new(device, queue, width, height);
     let mut text = TextRenderer::new();
     let mut decoder = spawn_video_stream(&job)?;
+    let mut side_decoder = match TimelineRender::transition_side(project, 0, total, width, height)?
+    {
+        Some(side_job) => Some(spawn_video_stream(&side_job)?),
+        None => None,
+    };
     let mut encoder = spawn_rgba_encoder(&job, &options.encoder, output)?;
     let mut cached: Option<(Vec<u64>, Option<Vec<u8>>)> = None;
     for frame in 0..total {
@@ -142,7 +174,20 @@ pub fn export_project(
         }
         let overlay = cached.as_ref().and_then(|(_, layer)| layer.as_deref());
         let steps = effect_steps(project, &catalog, frame);
-        let composed = compositor.compose(&base, overlay, &steps)?;
+        // The side stream runs in lockstep with the main one (gaps outside windows).
+        let side = match &mut side_decoder {
+            Some(stream) => stream.next_frame()?,
+            None => None,
+        };
+        let transition = match (&side, transition_at(&windows, &catalog, frame)) {
+            (Some(side), Some((step, base_is_from))) => Some(TransitionInput {
+                side,
+                base_is_from,
+                step,
+            }),
+            _ => None,
+        };
+        let composed = compositor.compose_with(&base, overlay, &steps, transition)?;
         encoder.write_frame(&composed)?;
         if frame % 5 == 0 {
             let seconds = project.format.frames_to_seconds(frame);

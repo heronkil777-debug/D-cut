@@ -80,6 +80,7 @@ fn run() -> Result<()> {
         }
         Some("render-project") => run_render_project(args),
         Some("download-model") => run_download_model(),
+        Some("bench-preview") => run_bench_preview(args),
         Some("transcribe") => run_transcribe(args),
         Some("export-quality") => run_export(args, false),
         Some("export-vaapi") => run_export(args, true),
@@ -190,6 +191,104 @@ fn run_render_project(mut args: impl Iterator<Item = String>) -> Result<()> {
         total,
         project.format.frame_rate_numerator,
         project.format.frame_rate_denominator
+    );
+    Ok(())
+}
+
+/// Headless preview benchmark: the same streams and GPU composition as the editor preview
+/// (main + transition side + audio decoders, effects/keyframes/transition/text at preview size,
+/// proxies when ready), as fast as possible. Reports fps and resident memory.
+fn run_bench_preview(mut args: impl Iterator<Item = String>) -> Result<()> {
+    use editor_media::timeline::{TimelineRender, spawn_audio_stream, spawn_video_stream};
+    let path = args
+        .next()
+        .context("usage: d-cut-cli bench-preview <project.dcut> [--long-side N] [--no-proxies]")?;
+    let mut long_side = 640_u32;
+    let mut proxies = true;
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--long-side" => long_side = parse_next(&mut args, "long side")?,
+            "--no-proxies" => proxies = false,
+            other => bail!("unknown option {other}"),
+        }
+    }
+    let project = editor_project::load(&path).with_context(|| format!("could not load {path}"))?;
+    let total = project.duration_frames();
+    let (w, h) = (project.format.width, project.format.height);
+    let scale = f64::from(long_side) / f64::from(w.max(h));
+    let even = |v: u32| ((f64::from(v) * scale).round() as u32 / 2 * 2).max(2);
+    let (width, height) = (even(w), even(h));
+    let prepare = |job: TimelineRender| if proxies { job.with_proxies() } else { job };
+    let main = prepare(TimelineRender::from_project(
+        &project, 0, total, width, height,
+    )?);
+    let side = TimelineRender::transition_side(&project, 0, total, width, height)?.map(prepare);
+    let audio = prepare(TimelineRender::from_project(&project, 0, total, 2, 2)?);
+    let audio_thread = std::thread::spawn(move || -> Result<u64> {
+        let mut stream = spawn_audio_stream(&audio, 48_000)?;
+        let mut buffer = vec![0.0_f32; 8192];
+        let mut samples = 0_u64;
+        loop {
+            let read = stream.read_samples(&mut buffer)?;
+            if read == 0 {
+                return Ok(samples);
+            }
+            samples += read as u64;
+        }
+    });
+    let (device, queue) = editor_render::headless_device()?;
+    let mut compositor = editor_render::OffscreenCompositor::new(device, queue, width, height);
+    let catalog = editor_effects::Catalog::builtin()?;
+    let windows = editor_core::transition_windows(&project);
+    let mut text = editor_text::TextRenderer::new();
+    let mut decoder = spawn_video_stream(&main)?;
+    let mut side_decoder = side.map(|job| spawn_video_stream(&job)).transpose()?;
+    let started = std::time::Instant::now();
+    let mut frames = 0_u64;
+    let mut cached: Option<(Vec<u64>, Option<Vec<u8>>)> = None;
+    while let Some(base) = decoder.next_frame()? {
+        let side_frame = match &mut side_decoder {
+            Some(stream) => stream.next_frame()?,
+            None => None,
+        };
+        let active: Vec<u64> = editor_text::active_overlays(&project, frames)
+            .iter()
+            .map(|o| o.id)
+            .collect();
+        if cached.as_ref().is_none_or(|(ids, _)| *ids != active) {
+            cached = Some((active, text.render_frame(&project, frames, width, height)));
+        }
+        let overlay = cached.as_ref().and_then(|(_, layer)| layer.as_deref());
+        let steps = editor_export::effect_steps(&project, &catalog, frames);
+        let transition = match (
+            &side_frame,
+            editor_export::transition_at(&windows, &catalog, frames),
+        ) {
+            (Some(side), Some((step, base_is_from))) => Some(editor_render::TransitionInput {
+                side,
+                base_is_from,
+                step,
+            }),
+            _ => None,
+        };
+        compositor.compose_with(&base, overlay, &steps, transition)?;
+        frames += 1;
+    }
+    let seconds = started.elapsed().as_secs_f64();
+    let samples = audio_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("audio thread panicked"))??;
+    let rss = std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<f64>().ok())
+        .map_or(0.0, |pages| pages * 4096.0 / 1_048_576.0);
+    let fps = project.format.frames_per_second();
+    println!(
+        "{frames}/{total} frames at {width}x{height} in {seconds:.1} s = {:.1} fps (needs {fps:.0}); audio {:.1} s decoded; proxies {}; transitions {}; RSS {rss:.0} MB",
+        frames as f64 / seconds.max(1e-6),
+        samples as f64 / 2.0 / 48_000.0,
+        if proxies { "on" } else { "off" },
+        windows.len()
     );
     Ok(())
 }

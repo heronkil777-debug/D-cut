@@ -1,0 +1,1 @@
+{"id":"wipe-diagonal","name":"Cortina diagonal","category":"transition","params":[{"id":"softness","name":"Suavidade","min":0,"max":0.3,"default":0.03}]}

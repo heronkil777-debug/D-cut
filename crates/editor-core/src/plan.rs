@@ -6,15 +6,18 @@
 use crate::{Project, Track, TrackKind};
 
 /// Source material for one plan segment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SegmentSource {
     pub clip_id: u64,
     pub media_id: u64,
     pub source_start_frame: u64,
+    pub speed: f32,
+    /// Timeline frames between the clip start and this segment's start.
+    pub clip_offset_frames: u64,
 }
 
 /// A contiguous timeline range; `source == None` means a gap (black video or silence).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlanSegment {
     pub timeline_start_frame: u64,
     pub duration_frames: u64,
@@ -32,7 +35,10 @@ fn source_at(track: &Track, frame: u64) -> Option<SegmentSource> {
         .map(|clip| SegmentSource {
             clip_id: clip.id,
             media_id: clip.media_id,
-            source_start_frame: clip.source_start_frame + (frame - clip.timeline_start_frame),
+            source_start_frame: clip.source_start_frame
+                + clip.source_frames_for(frame - clip.timeline_start_frame),
+            speed: clip.speed,
+            clip_offset_frames: frame - clip.timeline_start_frame,
         })
 }
 
@@ -63,11 +69,8 @@ fn build_plan(tracks: &[&Track], start: u64, end: u64) -> Vec<PlanSegment> {
         if let Some(previous) = segments.last_mut() {
             let continues = match (previous.source, source) {
                 (None, None) => true,
-                (Some(left), Some(right)) => {
-                    left.clip_id == right.clip_id
-                        && left.source_start_frame + previous.duration_frames
-                            == right.source_start_frame
-                }
+                // Adjacent intervals of the same clip are always continuous.
+                (Some(left), Some(right)) => left.clip_id == right.clip_id,
                 _ => false,
             };
             if continues {
@@ -116,4 +119,66 @@ pub fn top_video_clip_at(project: &Project, frame: u64) -> Option<&crate::Clip> 
                     && clip.timeline_end_frame().is_some_and(|end| frame < end)
             })
         })
+}
+
+/// An active transition between two adjacent clips on a video track.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransitionWindow {
+    pub track_id: u64,
+    pub from_clip: u64,
+    pub to_clip: u64,
+    pub package: String,
+    /// The cut between the clips; the window is centered on it.
+    pub cut_frame: u64,
+    pub start_frame: u64,
+    pub duration_frames: u64,
+}
+
+impl TransitionWindow {
+    pub fn contains(&self, frame: u64) -> bool {
+        frame >= self.start_frame && frame < self.start_frame + self.duration_frames
+    }
+
+    /// 0..1 across the window (frame centers).
+    pub fn progress(&self, frame: u64) -> f32 {
+        ((frame.saturating_sub(self.start_frame)) as f32 + 0.5) / self.duration_frames.max(1) as f32
+    }
+}
+
+/// Transitions whose clips are adjacent; durations are clamped to fit both clips.
+pub fn transition_windows(project: &Project) -> Vec<TransitionWindow> {
+    let mut windows = Vec::new();
+    for track in project
+        .tracks
+        .iter()
+        .filter(|track| track.kind == TrackKind::Video)
+    {
+        for pair in track.clips.windows(2) {
+            let (from, to) = (&pair[0], &pair[1]);
+            let Some(transition) = &to.transition_in else {
+                continue;
+            };
+            if from.timeline_end_frame() != Some(to.timeline_start_frame) {
+                continue;
+            }
+            let duration = transition
+                .duration_frames
+                .min(from.duration_frames)
+                .min(to.duration_frames)
+                & !1;
+            if duration < 2 {
+                continue;
+            }
+            windows.push(TransitionWindow {
+                track_id: track.id,
+                from_clip: from.id,
+                to_clip: to.id,
+                package: transition.package.clone(),
+                cut_frame: to.timeline_start_frame,
+                start_frame: to.timeline_start_frame - duration / 2,
+                duration_frames: duration,
+            });
+        }
+    }
+    windows
 }

@@ -1,0 +1,1 @@
+{"id":"blur-dissolve","name":"Desfocar e dissolver","category":"transition","params":[{"id":"radius","name":"Desfoque (px)","min":0,"max":24,"default":8}]}

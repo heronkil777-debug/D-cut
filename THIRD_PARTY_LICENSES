@@ -33,9 +33,9 @@ D-cut itself is licensed AGPL-3.0-or-later (see LICENSE).
    Full license texts are in each crate's source distribution.
 
 License summary (crate count):
-    98  MIT OR Apache-2.0
+   105  MIT OR Apache-2.0
     39  MIT
-    20  Apache-2.0 OR MIT
+    21  Apache-2.0 OR MIT
     10  Apache-2.0
      7  MIT/Apache-2.0
      6  MIT OR Apache-2.0 OR Zlib
@@ -69,6 +69,7 @@ Crates:
   bit-set 0.10.0 — Apache-2.0 OR MIT
   bit-vec 0.9.1 — Apache-2.0 OR MIT
   bitflags 2.13.2 — MIT OR Apache-2.0
+  block-buffer 0.12.1 — MIT OR Apache-2.0
   bytemuck 1.25.2 — Zlib OR Apache-2.0 OR MIT
   bytemuck_derive 1.12.1 — Zlib OR Apache-2.0 OR MIT
   byteorder-lite 0.1.0 — Unlicense OR MIT
@@ -77,12 +78,16 @@ Crates:
   cfg-if 1.0.5 — MIT OR Apache-2.0
   codespan-reporting 0.13.1 — Apache-2.0
   color 0.3.3 — Apache-2.0 OR MIT
+  const-oid 0.10.3 — Apache-2.0 OR MIT
   core_maths 0.1.1 — MIT
   cosmic-text 0.19.0 — MIT OR Apache-2.0
   cpal 0.18.2 — Apache-2.0
+  cpufeatures 0.3.1 — MIT OR Apache-2.0
   crc32fast 1.5.5 — MIT OR Apache-2.0
+  crypto-common 0.2.2 — MIT OR Apache-2.0
   cursor-icon 1.2.0 — MIT OR Apache-2.0 OR Zlib
   dasp_sample 0.11.0 — MIT OR Apache-2.0
+  digest 0.11.3 — MIT OR Apache-2.0
   dlib 0.5.3 — MIT
   document-features 0.2.12 — MIT OR Apache-2.0
   downcast-rs 1.2.1 — MIT/Apache-2.0
@@ -127,6 +132,7 @@ Crates:
   hashbrown 0.15.5 — MIT OR Apache-2.0
   hashbrown 0.16.1 — MIT OR Apache-2.0
   hashbrown 0.17.1 — MIT OR Apache-2.0
+  hybrid-array 0.4.15 — MIT OR Apache-2.0
   image 0.25.10 — MIT OR Apache-2.0
   indexmap 2.14.2 — Apache-2.0 OR MIT
   itertools 0.15.0 — MIT OR Apache-2.0
@@ -190,6 +196,7 @@ Crates:
   serde_core 1.0.229 — MIT OR Apache-2.0
   serde_derive 1.0.229 — MIT OR Apache-2.0
   serde_json 1.0.154 — MIT OR Apache-2.0
+  sha2 0.11.1 — MIT OR Apache-2.0
   sharded-slab 0.1.7 — MIT
   simd-adler32 0.3.10 — MIT
   skrifa 0.40.0 — MIT OR Apache-2.0
@@ -221,6 +228,7 @@ Crates:
   tree_magic_mini 3.2.2 — MIT
   ttf-parser 0.25.1 — MIT OR Apache-2.0
   type-map 0.5.1 — MIT/Apache-2.0
+  typenum 1.20.1 — MIT OR Apache-2.0
   unicode-bidi 0.3.18 — MIT OR Apache-2.0
   unicode-general-category 1.1.0 — Apache-2.0
   unicode-ident 1.0.27 — (MIT OR Apache-2.0) AND Unicode-3.0

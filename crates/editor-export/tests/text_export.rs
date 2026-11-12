@@ -371,6 +371,7 @@ fn clip_effects_are_rendered_into_the_export() {
     video.clips[0].effects.push(editor_core::EffectInstance {
         effect_id: "saturation".into(),
         params: vec![0.0],
+        keyframes: Vec::new(),
     });
     let output = dir.join("gray.mp4");
     let report = export_project(
