@@ -199,7 +199,7 @@ Cada fase termina com o AppImage gerado (a partir da 1) e o relatório da seçã
 
 | Fase | Critério | Estado |
 |---|---|---|
-| 1–7 | Tag `phase-N` ao fim de cada fase | ❌ nunca criadas; a entrega usa a tag semântica `v0.1.0` |
+| 1–7 | Tag `phase-N` ao fim de cada fase | ❌ nunca criadas; as entregas usam as tags semânticas `v0.1.0` e `v0.1.1` |
 | 4 | Golden test local na RX 6650 XT e no CI com lavapipe | ⚠️ CI/lavapipe ✅; local só no Vega 8, RX 6650 XT não medida |
 | 4 | Prévia 1080p30 sem drops com 2 efeitos na RX 6650 XT | ❌ não medido (só 960×540 no Vega 8) |
 | 5 | Qualidade avaliada com um áudio do usuário | ⚠️ medido com LibriVox (2–3% WER); o áudio do dono do projeto ainda não foi enviado |
@@ -307,7 +307,9 @@ Autosave a cada 30 s com recuperação de PID morto; atalhos Q/W/↑/↓/F1 e ja
 (29 efeitos + 16 transições); i18n por catálogo `en.tsv` (150 textos, sem dependência nova); PKGBUILD testado com
 makepkg local e update info zsync embutida no AppImage (checagem só com opt-in explícito). Templates e biblioteca de
 músicas seguem fora, com o motivo registrado. Push, CI e tag `v0.1.0` feitos em 2026-11-12 com Release pública;
-`sha256sums` do PKGBUILD confere com o tarball da tag. Falta apenas o envio ao AUR (sem conta) e completar o i18n EN.
+`sha256sums` do PKGBUILD confere com o tarball da tag. Em 2026-11-13 saiu a `v0.1.1` (seletor de modelo de
+transcrição) também com Release pública e o PKGBUILD apontando para o tarball dela. Falta apenas o envio ao AUR
+(sem conta) e completar o i18n EN.
 
 ## 11. Alinhamento (mensagem depois da minha escolha, caminho D)
 
@@ -338,7 +340,7 @@ Toda fase termina com tudo abaixo:
   5. Próxima fase em uma linha.
 - Tag `phase-N` criada.
 
-> **Nota (2026-11-12):** as tags `phase-1`…`phase-7` nunca foram criadas; a entrega das Fases 1–7 foi marcada com a tag semântica `v0.1.0` (Release pública). O relatório por fase existe em `docs/STATUS.md`. Se quiser o histórico literal, as tags podem ser criadas retroativamente nos commits de fechamento de cada fase.
+> **Nota (2026-11-12):** as tags `phase-1`…`phase-7` nunca foram criadas; as entregas foram marcadas com as tags semânticas `v0.1.0` (12/11) e `v0.1.1` (13/11, com o seletor de modelo), ambas com Release pública. O relatório por fase existe em `docs/STATUS.md`. Se quiser o histórico literal, as tags podem ser criadas retroativamente nos commits de fechamento de cada fase.
 
 Pare e espere meu “ok”, salvo quando o usuário autorizar explicitamente a execução contínua de várias fases; nesse caso, conclua e relate o máximo possível antes de pausar.
 
@@ -346,5 +348,5 @@ Pare e espere meu “ok”, salvo quando o usuário autorizar explicitamente a e
 
 - O usuário escolheu o caminho D ao dizer explicitamente que quer que o agente construa o editor. Não substituir isso por pedir que o usuário teste um projeto existente.
 - Desenvolvimento permanece no checkout e branch Arena vinculados à sessão. Sem push, force-push, release, PR ou publicação sem solicitação explícita.
-- A implementação inicial da Fase 1 foi criada após o usuário confirmar seus oito critérios. Estado atual (2026-11-12): Fases 1–7 implementadas, 63 testes verdes, CI verde em `1ba26fe`, `v0.1.0` publicada e verificada; pendências e limitações em `docs/STATUS.md`.
+- A implementação inicial da Fase 1 foi criada após o usuário confirmar seus oito critérios. Estado atual (2026-11-13): Fases 1–7 implementadas, 63 testes verdes, CI verde em `a42f713`, `v0.1.0` e `v0.1.1` publicadas e verificadas; pendências e limitações em `docs/STATUS.md`.
 - A revisão de alinhamento de 2026-11-12 comparou este briefing com o código real: nenhum default foi reaberto, mas o escopo não entregue (chroma key/máscara/remoção de fundo, codecs além de H.264, rampa de velocidade, redução de ruído) ficou registrado explicitamente na seção 10.

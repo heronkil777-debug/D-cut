@@ -14,7 +14,7 @@ optdepends=('whisper.cpp: offline automatic subtitles (whisper-cli)'
             'vulkan-intel: Vulkan driver for Intel GPUs'
             'libva-mesa-driver: hardware H.264 export (VAAPI)')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('94b3ab769eb4c19a56c14c08d7a57be4a0f61ccf7f04075f65c3d019d555e4b9')
+sha256sums=('622acac90a80d4e32340e4e208babb33030b8dd916157226d1f8ff9e730c85d5')
 
 prepare() {
     cd "D-cut-${pkgver}"

@@ -1,13 +1,14 @@
 # Status do projeto
 
-- **Data:** 2026-11-12
+- **Data:** 2026-11-13
 - **Produto:** D-cut; caminho D. Branch local `master` publica em `main` (`remote.origin.push`).
 - **Estado:** Fases 1–7 implementadas, publicadas e verificadas. Corte, texto/legendas na GPU, multi-faixa,
   motor de efeitos (29 efeitos + 16 transições), legenda automática offline (whisper.cpp, modelo escolhido
   pelo usuário), velocidade, keyframes de efeito, áudio por clipe, proxies, autosave/recuperação, i18n
   PT-BR (+ EN parcial), PKGBUILD para o AUR e checagem de atualização opt-in.
-- **Entrega:** tag anotada `v0.1.0` → Release pública com AppImage, `.sha256` e `.zsync`. HEAD do `main` é
-  `1ba26fe` (seletor de modelo), CI verde. Não existem tags `phase-N`; o histórico por fase está neste arquivo.
+- **Entrega:** tags anotadas `v0.1.0` (12/11) e **`v0.1.1` (13/11)** → Releases públicas com AppImage,
+  `.sha256` e `.zsync`. A `v0.1.1` é a primeira com o seletor de modelo de transcrição. HEAD do `main` é
+  `a42f713`, CI verde. Não existem tags `phase-N`; o histórico por fase está neste arquivo.
 - **Divergências aprovadas:** composição de vídeo via grafo FFmpeg (provisória, comparação em DECISIONS);
   texto/legendas compostos no wgpu (`editor-render`); catálogo de modelos de fala em vez de `small` fixo.
 
@@ -35,8 +36,15 @@
   "Atalhos"; desligados quando um campo de texto tem foco (`egui_wants_keyboard_input`).
 - **Fase 7 — AUR:** `release/aur/PKGBUILD` compilado por `scripts/test-pkgbuild.sh` (makepkg local, sem sudo),
   pacote de **11.376.910 bytes** com `usr/bin/d-cut`, `usr/bin/d-cut-cli`, `.desktop`, metainfo, ícone,
-  `LICENSE` e `THIRD_PARTY_LICENSES`; `sha256sums=('94b3ab76…e4b9')` confere com o tarball de `v0.1.0`.
-- **Publicado (v0.1.0):** `github.com/heronkil777-debug/D-cut`, branch única `main`. CI verde em `498b0b9`;
+  `LICENSE` e `THIRD_PARTY_LICENSES`; `pkgver=0.1.1` e `sha256sums=('622acac9…85d5')`, conferido com o tarball
+  da tag `v0.1.1` (`release/fill-sha256sums.sh v0.1.1`), com `.SRCINFO` regenerado.
+- **Publicado (v0.1.1, 13/11):** tag anotada `v0.1.1` no commit `a42f713`; CI verde (run do push e run da tag,
+  que roda `checks` → `appimage` → `release`). Release com **`D-cut-x86_64.AppImage` 29.542.904 bytes**,
+  sha256 `62532f2a0a7c7809f9c5f8c26ceb3778c8d419a3a0490abd1962bd0966f406be`, `.sha256` (88 bytes) e `.zsync`
+  (101.263 bytes). Asset baixado de novo e conferido: `sha256sum -c` OK, `--cli --version` → `D-cut 0.1.1`,
+  `--cli models` lista os três modelos e `--cli probe` OK **com um `ffmpeg` falso no PATH** (prova o FFmpeg
+  embutido). Build local equivalente: 29.542.904 bytes, sha256 `d5afd3aa…0c94`, GUI abrindo e fechando com exit 0.
+- **Publicado (v0.1.0, 12/11):** CI verde em `498b0b9`;
   Release com **`D-cut-x86_64.AppImage` 29.530.616 bytes**, `.sha256` e `.zsync` (101.221 bytes).
   Artefato baixado de novo e conferido: `sha256sum -c` OK, `--cli --version` → `D-cut 0.1.0`,
   `--cli probe` OK **com um `ffmpeg` falso no PATH** (prova o FFmpeg embutido). GUI do artefato publicado:
@@ -66,7 +74,10 @@
   recuperação em execução real foram).
 - i18n parcial: mensagens de status montadas com `format!` (números/nomes) e nomes de efeitos dos manifests
   continuam em pt-BR.
-- Checagem de atualização: nunca exercitada de ponta a ponta contra a Release `v0.1.0`.
+- Checagem de atualização: nunca exercitada de ponta a ponta contra uma Release real (a `v0.1.1` já existe).
+- GUI do asset publicado `v0.1.1`: o teste `D_CUT_AUTOTEST=quit:5` ficou em timeout porque a sessão estava
+  bloqueada (`LockedHint=yes`) — mesma causa de ambiente de antes, não evidência sobre o artefato; o build
+  local equivalente abriu e fechou com exit 0. Falta repetir com a sessão desbloqueada.
 - AUR: PKGBUILD **não publicado** — criar conta/chave em aur.archlinux.org está falhando para o usuário.
 - RX 6650 XT (desktop): nada medido lá; todo desempenho registrado é do Vega 8 (prévia 960×540).
 - Prévia converte YUV→RGB com BT.601 (desvio leve de cor só na tela; export preserva os valores YUV).
@@ -77,7 +88,7 @@
 - Chroma key, máscara e remoção de fundo não existem (`editor-vision` não foi criado).
 - Export só MP4 H.264 + AAC; HEVC, VP9/WebM, AV1, GIF e PNG não implementados.
 - Aceite de 720p no notebook (~6 GB) nunca foi rodado pelo usuário.
-- Tags `phase-1`…`phase-7` não existem; a entrega está na tag `v0.1.0`.
+- Tags `phase-1`…`phase-7` não existem; as entregas estão nas tags `v0.1.0` e `v0.1.1`.
 - Modelo de teste `~/.cache/dcut-test/ggml-large-v3-turbo.bin` (1,6 GB) ainda no disco, aguardando decisão.
 - Templates e biblioteca de músicas: fora (reavaliado na Fase 7 — ver DECISIONS).
 
@@ -86,7 +97,8 @@
 1. Usuário rodar o checklist no Arch (notebook e, se possível, desktop RX 6650 XT): editar 720p com a janela
    visível, autosave/recuperação, troca de idioma, atalhos e export.
 2. Quando o usuário enviar 1–2 min de fala PT-BR, rodar `d-cut-cli transcribe --model small` e reportar o WER.
-3. Publicar o AppImage com o seletor de modelo (`v0.1.1`) e o PKGBUILD no AUR — os dois aguardam autorização
-   (o usuário pediu para deixar a Release para quando estiver tudo pronto).
+3. Publicar o PKGBUILD no AUR — bloqueado por falta de conta/chave em aur.archlinux.org; o pacote já está
+   pronto em `release/aur/` com `pkgver=0.1.1` e checksum do tarball da tag.
 4. Escopo que continua aberto, por demanda: `editor-vision` (chroma key/máscara/remoção de fundo), codecs de
    export além de H.264, rampa de velocidade e redução de ruído.
+5. Repetir o teste de GUI do asset publicado com a sessão desbloqueada (ficou inconclusivo por sessão bloqueada).

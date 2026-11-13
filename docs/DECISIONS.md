@@ -146,3 +146,10 @@ Registros em ordem cronológica. Datas em UTC.
   (b) `editor-vision` fica adiado até haver demanda por chroma key/máscara/remoção de fundo — o crate só nasce
   com a fase; (c) codecs de export além de H.264 continuam como "depois", sem data; (d) o briefing passa a
   carregar o estado real de cada critério, para não pedir de novo o que já está pronto.
+- **Publicação da v0.1.1 (2026-11-13):** a versão saiu por autorização do usuário ("pode colocar"). Bump
+  `0.1.0 → 0.1.1` no workspace/crates/`Cargo.lock`, `pkgver` do PKGBUILD e README; release notes novas
+  (`release/RELEASE_NOTES-v0.1.1.md`) com o seletor de modelo, os comandos novos da CLI e as limitações reais
+  (sem codecs além de H.264, sem chroma key/máscara/remoção de fundo). O AppImage foi reconstruído no
+  container, verificado localmente e depois publicado; o asset da Release foi baixado de novo e conferido
+  (`sha256sum -c`, `--cli --version` → `0.1.1`, `probe` com `ffmpeg` falso no `PATH`). A nota da v0.1.0 que
+  anunciava "redução de ruído por clipe" foi corrigida nas notas novas: o recurso não existe.
