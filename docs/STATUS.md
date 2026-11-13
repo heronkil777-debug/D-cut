@@ -75,9 +75,10 @@
 - i18n parcial: mensagens de status montadas com `format!` (números/nomes) e nomes de efeitos dos manifests
   continuam em pt-BR.
 - Checagem de atualização: nunca exercitada de ponta a ponta contra uma Release real (a `v0.1.1` já existe).
-- GUI do asset publicado `v0.1.1`: o teste `D_CUT_AUTOTEST=quit:5` ficou em timeout porque a sessão estava
-  bloqueada (`LockedHint=yes`) — mesma causa de ambiente de antes, não evidência sobre o artefato; o build
-  local equivalente abriu e fechou com exit 0. Falta repetir com a sessão desbloqueada.
+- GUI do asset publicado `v0.1.1`: ✅ repetido em 2026-11-13 com a sessão desbloqueada —
+  `D_CUT_AUTOTEST=quit:6 --appimage-extract-and-run` abre, loga `D-cut starting version="0.1.1"` +
+  `D-cut window closed cleanly` e sai com **exit 0**. (Na primeira tentativa, 13/11 04:16, deu timeout porque
+  a sessão estava bloqueada — ambiente, não o artefato.)
 - AUR: PKGBUILD **não publicado** — criar conta/chave em aur.archlinux.org está falhando para o usuário.
 - RX 6650 XT (desktop): nada medido lá; todo desempenho registrado é do Vega 8 (prévia 960×540).
 - Prévia converte YUV→RGB com BT.601 (desvio leve de cor só na tela; export preserva os valores YUV).
@@ -101,4 +102,4 @@
    pronto em `release/aur/` com `pkgver=0.1.1` e checksum do tarball da tag.
 4. Escopo que continua aberto, por demanda: `editor-vision` (chroma key/máscara/remoção de fundo), codecs de
    export além de H.264, rampa de velocidade e redução de ruído.
-5. Repetir o teste de GUI do asset publicado com a sessão desbloqueada (ficou inconclusivo por sessão bloqueada).
+5. Repetir o teste de GUI do asset publicado com a sessão desbloqueada — feito em 13/11 (exit 0).
