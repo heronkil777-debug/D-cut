@@ -120,7 +120,7 @@ Registros em ordem cronológica. Datas em UTC.
 ## 2026-11-11 — Fase 7: polimento
 - **Autosave/recuperação:** `editor-project::autosave` grava `autosave-<pid>.dcut` + metadados a cada 30 s com mudanças (gravação atômica, mídia relativa). Saída limpa ou salvar apagam; ao abrir, autosaves de processos mortos são oferecidos (Recuperar/Descartar).
 - **Atalhos:** acrescentados Q/W (cortar início/fim no playhead), ↑/↓ (pontos de edição), F1 (lista de atalhos), além dos existentes.
-- **i18n:** catálogo `editor-ui/locales/en.tsv` (148 textos, chave = texto pt-BR); idioma em `~/.config/d-cut/settings.json` ou `D_CUT_LANG`. Teste falha se um `tr("…")` não tiver tradução. **Limitação:** mensagens de status montadas com `format!` (com números/nomes) e nomes de efeitos dos manifests continuam em pt-BR. Escolhido em vez de fluent para não adicionar dependência; trocar depois é mecânico (chaves já centralizadas).
+- **i18n:** catálogo `editor-ui/locales/en.tsv` (150 textos, chave = texto pt-BR); idioma em `~/.config/d-cut/settings.json` ou `D_CUT_LANG`. Teste falha se um `tr("…")` não tiver tradução. **Limitação:** mensagens de status montadas com `format!` (com números/nomes) e nomes de efeitos dos manifests continuam em pt-BR. Escolhido em vez de fluent para não adicionar dependência; trocar depois é mecânico (chaves já centralizadas).
 - **Catálogo:** 45 pacotes (29 efeitos + 16 transições), todos com golden test; os 18 novos entraram só como arquivos de pacote.
 - **Atualização (opt-in):** "Verificar atualizações" desligado por padrão; quando ligado, consulta a API de releases do GitHub via `curl` do sistema e só avisa. O AppImage leva `gh-releases-zsync|heronkil777-debug|D-cut|latest|…` e o `.zsync` é gerado pelo appimagetool, para AppImageUpdate/Gear Lever fazerem a atualização delta. Nada baixa sozinho.
 - **AUR:** `release/aur/PKGBUILD` (compila do fonte; `sha256sums` a preencher na primeira tag) e `scripts/test-pkgbuild.sh`. Testado com `makepkg` local (sem sudo; `--nodeps` porque o cargo veio do rustup e não do pacman).
@@ -137,4 +137,12 @@ Registros em ordem cronológica. Datas em UTC.
   e `large-v3-turbo` **53,7%** (124/29/35), em 5min20s e 33min36s respectivamente (Ryzen 5 3500U, 6
   threads; o large estourou a RAM e caiu no swap). Conclusão: nenhum Whisper transcreve letra cantada de
   forma utilizável, então o app não promete isso; o seletor serve para melhorar fala em áudio difícil.
-  O WER de **fala** em PT-BR segue não medido (critério 5.5).
+  O WER de **fala** em PT-BR foi medido em áudio LibriVox (*O Alienista*, ~2–3%), então o critério 5.5 está
+  tecnicamente coberto; o que falta é repetir com um áudio do próprio usuário.
+- **Revisão de alinhamento do briefing (2026-11-12):** o prompt mestre foi conferido contra o código e o que
+  divergiu foi registrado em `docs/BRIEFING.md` (bloco "Divergências aprovadas" 4–8 e tabela na seção 10) e em
+  `docs/STATUS.md`. Nenhum default da seção 7 foi reaberto. Decisões desta revisão: (a) a entrega usa tags
+  semânticas (`v0.1.0`) em vez de `phase-N`, e as tags por fase não serão criadas retroativamente sem pedido;
+  (b) `editor-vision` fica adiado até haver demanda por chroma key/máscara/remoção de fundo — o crate só nasce
+  com a fase; (c) codecs de export além de H.264 continuam como "depois", sem data; (d) o briefing passa a
+  carregar o estado real de cada critério, para não pedir de novo o que já está pronto.

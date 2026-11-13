@@ -34,7 +34,7 @@
 ## Build and verification
 - Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`; report exact results honestly.
 - From Phase 1 onward, produce the AppImage and report its status. Do not claim CI is green unless checked.
-- End every phase with the briefing's ordered acceptance report and a local `phase-N` tag; stop for the user's `ok`.
+- End every phase with the briefing's ordered acceptance report and a local `phase-N` tag; stop for the user's `ok`. (Phases 1–7 were delivered without `phase-N` tags; the delivery is tagged `v0.1.0` — see `docs/STATUS.md`.)
 - AppImage builds target an old glibc container and must not bundle host Vulkan/Mesa/VAAPI/audio/display drivers. Follow the FUSE fallback and license/notice requirements in the briefing.
 
 ## Commands (verified 2026-11-11)

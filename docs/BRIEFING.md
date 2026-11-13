@@ -1,9 +1,11 @@
 # Briefing completo do projeto
 
-> Fonte: briefing integral fornecido pelo usuário. Atualizado em 2026-11-11 com a escolha do caminho D e o alinhamento aprovado. A especificação abaixo é mantida integralmente; decisões novas que alterem o escopo devem atualizar este arquivo e `docs/DECISIONS.md` juntos.
+> Fonte: briefing integral fornecido pelo usuário. Atualizado em 2026-11-11 com a escolha do caminho D e o alinhamento aprovado; revisado em 2026-11-12 contra o código real (estado dos critérios da seção 10). A especificação abaixo é mantida integralmente; decisões novas que alterem o escopo devem atualizar este arquivo e `docs/DECISIONS.md` juntos.
 
 
 > **Divergências aprovadas (2026-11-11, ver docs/DECISIONS.md):** (1) a composição/prévia/export usa provisoriamente um grafo FFmpeg em vez do `editor-render`/wgpu; não é definitiva sem comparação medida contra wgpu. (2) O AppImage de teste pode sair sem FFmpeg; a entrega portátil final exige FFmpeg 7+ embutido com licenças documentadas. (3) Fase 3 implementada com wgpu + cosmic-text (texto composto pelo `editor-render`); comparação FFmpeg × wgpu registrada em DECISIONS, sem decisão definitiva.
+>
+> **Divergências aprovadas (2026-11-12, ver docs/DECISIONS.md):** (4) o modelo de transcrição deixou de ser fixo: catálogo `small`/`medium`/`large-v3-turbo` escolhido pelo usuário (`settings.json` → `speech_model`, `--model` na CLI). (5) A ressalva de (2) está cumprida: o AppImage embute FFmpeg 7.1.5 e tem 29,5 MB. (6) O catálogo de efeitos já está em 45 pacotes (29 efeitos + 16 transições), à frente do escalonamento do §5.2. (7) `editor-vision` foi adiado: chroma key, máscara e remoção de fundo continuam não implementados. (8) i18n por catálogo TSV (`en.tsv`) em vez de `fluent`; `cpal` 0.18.2 com resample pelo `aresample` do FFmpeg, sem `rubato`; a entrega usa tags semânticas (`v0.1.0`) em vez de `phase-N`.
 
 ## PROJETO: editor de vídeo open source estilo CapCut pro Arch Linux (AppImage)
 
@@ -103,6 +105,8 @@ Timeline multi-faixa com trim/split/ripple/undo-redo · export (MP4 H.264 primei
 
 Desde cedo: projeto com proporção e fps configuráveis (16:9, 9:16, 1:1, 4:5) e UX básica de editor (snap na timeline, zoom, arrastar-e-soltar de arquivos, atalhos).
 
+**Estado em 2026-11-12:** ✅ timeline multi-faixa, trim/split/ripple/undo-redo, texto e legendas na GPU, efeitos e transições na GPU, keyframes de efeito, áudio por clipe, legenda automática PT-BR, CLI headless. ⚠️ curvas de velocidade (só velocidade constante), redução de ruído (não existe). ❌ chroma key, máscara e remoção de fundo; ❌ export além de MP4 H.264 + AAC (HEVC, VP9/WebM, AV1, GIF e PNG).
+
 ### 5.2 Efeitos: escalonamento explícito
 
 Efeitos são escopo pleno, mas entram por fase — catálogo é expansível por design, e a meta é cobrir o meu uso real, não bater um número de concorrente.
@@ -112,6 +116,8 @@ Efeitos são escopo pleno, mas entram por fase — catálogo é expansível por 
 - Fase 7: catálogo de 40–60, por demanda real de uso.
 - Regra dura: pacote sem golden test não está pronto. Sem frame de referência, não conta como entregue.
 - Teste de escalabilidade que vale mais que o número: adicionar o 11º pacote sem tocar em código do motor (só manifest + `.wgsl` + golden test).
+
+**Estado em 2026-11-12:** 45 pacotes entregues (29 efeitos + 16 transições), todos com golden test; os 18 últimos entraram só como `manifest.json` + `effect.wgsl` + golden, sem tocar no motor — o teste de escalabilidade foi cumprido na prática. A revisão visual dessa folha de contato ainda não foi feita por um humano.
 
 ### 5.3 Fora, por enquanto
 
@@ -138,6 +144,8 @@ Export: re-decode em qualidade cheia → render → encode.
 
 Crie cada crate só quando a fase precisar — a Fase 1 cria apenas core, render, ui e cli. O nome público do app/projeto é **D-cut**, definido pelo usuário em 2026-11-11. O prefixo `editor-` dos crates é provisório: concentre-o num lugar só, pra renomear com um comando. O usuário confirma que criou o ícone enviado com IA e quer usá-lo; ajustar o lettering incorreto para `D-cut`. A versão ajustada está em `assets/branding/d-cut-icon.png`, com a imagem original preservada em `assets/branding/d-cut-logo-reference.webp`.
 
+**Estado em 2026-11-12:** 10 crates no workspace; `editor-vision` não foi criado porque a fase que o exigia (chroma key/máscara/remoção de fundo) não foi feita. `editor-speech` existe desde a Fase 5.
+
 ## 7. Decisões
 
 ### 7.1 Já tomadas (não reabrir)
@@ -148,12 +156,12 @@ Rust · FFmpeg pra codecs (nada de escrever codec) · `wgpu` + WGSL · efeitos e
 
 - UI: egui/eframe com backend wgpu — um único device pra UI e render, timeline customizada é fácil, empacotamento leve. Alternativas: iced, GTK4. Evite Tauri: preview em tempo real via webview dá dor de cabeça e o AppImage com WebKitGTK fica pesado e frágil.
 - Seletor de arquivos: portal (`rfd`) quando existir, com fallback pro seletor dentro do egui (ex.: egui-file-dialog, se existir e estiver mantido).
-- FFmpeg no Rust: decidir num spike da Fase 2A entre bindings (`ffmpeg-next`, o fork `ffmpeg-the-third`, `rsmpeg`) e processo ffmpeg externo (só pro export). Critérios: suporta FFmpeg 7+, está mantido, dá seek preciso e acesso aos frames. Me pergunte antes de fixar.
-- Áudio de saída: `cpal` (PipeWire/ALSA do sistema) + `rubato` pra resample.
+- FFmpeg no Rust: decidir num spike da Fase 2A entre bindings (`ffmpeg-next`, o fork `ffmpeg-the-third`, `rsmpeg`) e processo ffmpeg externo (só pro export). Critérios: suporta FFmpeg 7+, está mantido, dá seek preciso e acesso aos frames. Me pergunte antes de fixar. **Decidido em 2026-11-11 (DECISIONS §47):** processo FFmpeg externo, com `probe`+`seek` frame-exatos e 20/20 seeks validados; o AppImage embute FFmpeg 7.1.5.
+- Áudio de saída: `cpal` (PipeWire/ALSA do sistema) + `rubato` pra resample. **Como ficou:** `cpal` 0.18.2 e o resample é feito pelo `aresample` do próprio FFmpeg na taxa do dispositivo; `rubato` não entrou (dependência desnecessária).
 - Texto: layout com `cosmic-text` (ou equivalente) e uma fonte padrão livre (OFL) embutida.
 - Licença: AGPL-3.0-or-later (a mesma do Concat/CapCraft; compatível com FFmpeg/x264/x265 em modo GPL). Nada de `--enable-nonfree/libfdk_aac`: AAC com o encoder nativo do FFmpeg. Licença mais permissiva (MIT/Apache) exigiria FFmpeg LGPL (sem x264/x265) ou processo separado. Não copie código, shader ou asset do Concat/CapCraft sem eu aprovar; se copiar, mantenha créditos e licença.
 - Codecs: importa tudo que o FFmpeg decodifica. Export H.264+AAC primeiro, com dois perfis: “Rápido” (VAAPI na AMD) e “Qualidade” (x264, CRF); depois HEVC (VAAPI/x265), VP9/Opus e AV1 por CPU (SVT-AV1). Saída padrão compatível: yuv420p, BT.709, +faststart, AAC 48 kHz.
-- IA: só local. Legenda com whisper.cpp (PT-BR, timestamps por palavra); modelos baixados sob demanda, com checksum, fora do AppImage. Confira a licença de cada modelo (alguns de remoção de fundo são só pra uso não comercial) e registre em `THIRD_PARTY_LICENSES`. IA acelerada em GPU AMD no Linux é irregular (o suporte oficial do ROCm costuma não incluir a RX 6650 XT): baseline em CPU, Vulkan onde o runtime suportar. Remoção de fundo com ONNX depois.
+- IA: só local. Legenda com whisper.cpp (PT-BR, timestamps por palavra); modelos baixados sob demanda, com checksum, fora do AppImage. Confira a licença de cada modelo (alguns de remoção de fundo são só pra uso não comercial) e registre em `THIRD_PARTY_LICENSES`. IA acelerada em GPU AMD no Linux é irregular (o suporte oficial do ROCm costuma não incluir a RX 6650 XT): baseline em CPU, Vulkan onde o runtime suportar. Remoção de fundo com ONNX depois. **Como ficou (2026-11-12):** catálogo com `small` (488 MB, padrão), `medium` (1,5 GB) e `large-v3-turbo` (1,6 GB), SHA-256 oficiais e escolha do usuário; WER 2–3% em fala PT-BR (LibriVox) e 66,6%/53,7% em letra cantada (`small`/`large-v3-turbo`) — nenhum Whisper serve para música.
 - Templates e biblioteca de músicas: fora até a Fase 7.
 - Projeto: JSON com `format_version` e migrações; mídia por caminho relativo + hash.
 - Rede: nenhuma chamada além de download de modelos e checagem de atualização, ambos opt-in e desligados por padrão.
@@ -181,9 +189,30 @@ Rust · FFmpeg pra codecs (nada de escrever codec) · `wgpu` + WGSL · efeitos e
 - Documente o requisito de FUSE e o fallback `--appimage-extract-and-run`.
 - GitHub Actions: a cada push/PR, fmt, clippy, test e cargo deny; a cada tag, AppImage + `.zsync` + checksums (SHA-256). Auto-update via zsync é opt-in. PKGBUILD pro AUR só no fim.
 
+**Estado (2026-11-12):** cumprido — build em container Ubuntu 22.04 (podman/docker), AppImage de 29,5 MB sem libs do host, FFmpeg 7.1.5 embutido, `THIRD_PARTY_LICENSES` no repo e dentro do AppImage, `.desktop`/metainfo/ícone, FUSE e `--appimage-extract-and-run` documentados, CI com `cargo deny` + AppImage + `.zsync` + SHA-256 na tag.
+
 ## 10. Fases (caminho D)
 
 Cada fase termina com o AppImage gerado (a partir da 1) e o relatório da seção 12. Os itens numerados são os critérios de aceite — o relatório responde um por um, na ordem.
+
+**Revisão de alinhamento (2026-11-12):** os critérios das Fases 1, 2A–2D e 3 estão cumpridos e registrados em `docs/STATUS.md` (seeks 20/20 frame-exatos, deriva A/V 3,4 ms, export conferido por `ffprobe`). O que **não** está cumprido ao pé da letra:
+
+| Fase | Critério | Estado |
+|---|---|---|
+| 1–7 | Tag `phase-N` ao fim de cada fase | ❌ nunca criadas; a entrega usa a tag semântica `v0.1.0` |
+| 4 | Golden test local na RX 6650 XT e no CI com lavapipe | ⚠️ CI/lavapipe ✅; local só no Vega 8, RX 6650 XT não medida |
+| 4 | Prévia 1080p30 sem drops com 2 efeitos na RX 6650 XT | ❌ não medido (só 960×540 no Vega 8) |
+| 5 | Qualidade avaliada com um áudio do usuário | ⚠️ medido com LibriVox (2–3% WER); o áudio do dono do projeto ainda não foi enviado |
+| 6 | Keyframes e curvas de velocidade | ⚠️ keyframes de efeito ✅; velocidade só constante, sem rampa/curva |
+| 6 | +15 transições | ✅ 16 entregues, mas sem *handles*: o extremo congela |
+| 6 | Áudio multi-faixa: mixagem, fade, redução de ruído | ⚠️ mixagem/fade por clipe ✅; redução de ruído ❌ |
+| 6 | Proxies | ✅ |
+| 6 | Aceite: editar 720p no notebook sem estourar ~6 GB | ⚠️ pendente do teste do usuário |
+| 7 | i18n PT-BR e EN | ⚠️ EN parcial: `tr()` traduzido, mas `format!` e nomes de efeito ficam em PT |
+| 7 | AUR (PKGBUILD) | ⚠️ PKGBUILD compilado e checksum conferido; envio bloqueado por falta de conta no AUR |
+| 7 | Reavaliar templates e biblioteca de músicas | ✅ reavaliado e mantido fora, com motivo em DECISIONS |
+| 5.1 | Chroma key, máscara e remoção de fundo | ❌ não implementados (`editor-vision` não existe) |
+| 5.1 | Export HEVC, VP9/WebM, AV1, GIF e PNG | ❌ só MP4 H.264 + AAC |
 
 ### Fase 1 — Esqueleto
 
@@ -275,9 +304,10 @@ Divida em subfases para implementação e validação. A regra de esperar “ok�
 
 **Status:** implementado em 2026-11-11 (detalhes e limitações em `docs/STATUS.md` e `docs/DECISIONS.md`).
 Autosave a cada 30 s com recuperação de PID morto; atalhos Q/W/↑/↓/F1 e janela de atalhos; catálogo de 45 pacotes
-(29 efeitos + 16 transições); i18n por catálogo `en.tsv` (148 textos, sem dependência nova); PKGBUILD testado com
+(29 efeitos + 16 transições); i18n por catálogo `en.tsv` (150 textos, sem dependência nova); PKGBUILD testado com
 makepkg local e update info zsync embutida no AppImage (checagem só com opt-in explícito). Templates e biblioteca de
-músicas seguem fora, com o motivo registrado. Pendente para publicar: push/CI, tag, `sha256sums` e envio ao AUR.
+músicas seguem fora, com o motivo registrado. Push, CI e tag `v0.1.0` feitos em 2026-11-12 com Release pública;
+`sha256sums` do PKGBUILD confere com o tarball da tag. Falta apenas o envio ao AUR (sem conta) e completar o i18n EN.
 
 ## 11. Alinhamento (mensagem depois da minha escolha, caminho D)
 
@@ -308,10 +338,13 @@ Toda fase termina com tudo abaixo:
   5. Próxima fase em uma linha.
 - Tag `phase-N` criada.
 
+> **Nota (2026-11-12):** as tags `phase-1`…`phase-7` nunca foram criadas; a entrega das Fases 1–7 foi marcada com a tag semântica `v0.1.0` (Release pública). O relatório por fase existe em `docs/STATUS.md`. Se quiser o histórico literal, as tags podem ser criadas retroativamente nos commits de fechamento de cada fase.
+
 Pare e espere meu “ok”, salvo quando o usuário autorizar explicitamente a execução contínua de várias fases; nesse caso, conclua e relate o máximo possível antes de pausar.
 
 ## Acordos de colaboração registrados
 
 - O usuário escolheu o caminho D ao dizer explicitamente que quer que o agente construa o editor. Não substituir isso por pedir que o usuário teste um projeto existente.
 - Desenvolvimento permanece no checkout e branch Arena vinculados à sessão. Sem push, force-push, release, PR ou publicação sem solicitação explícita.
-- A implementação inicial da Fase 1 foi criada após o usuário confirmar seus oito critérios. A validação Rust, a execução da janela, o AppImage e a CI ainda estão pendentes; consultar `docs/STATUS.md` para o estado atual.
+- A implementação inicial da Fase 1 foi criada após o usuário confirmar seus oito critérios. Estado atual (2026-11-12): Fases 1–7 implementadas, 63 testes verdes, CI verde em `1ba26fe`, `v0.1.0` publicada e verificada; pendências e limitações em `docs/STATUS.md`.
+- A revisão de alinhamento de 2026-11-12 comparou este briefing com o código real: nenhum default foi reaberto, mas o escopo não entregue (chroma key/máscara/remoção de fundo, codecs além de H.264, rampa de velocidade, redução de ruído) ficou registrado explicitamente na seção 10.
