@@ -27,21 +27,21 @@ default-members = [
 
 [workspace.package]
 edition = "2024"
-version = "0.1.0"
+version = "0.1.1"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/heronkil777-debug/D-cut"
 rust-version = "1.95"
 
 [workspace.dependencies]
 # Internal crates (the provisional `editor-` prefix lives here and in the crate manifests).
-editor-core = { path = "crates/editor-core", version = "0.1.0" }
-editor-media = { path = "crates/editor-media", version = "0.1.0" }
-editor-project = { path = "crates/editor-project", version = "0.1.0" }
-editor-render = { path = "crates/editor-render", version = "0.1.0" }
-editor-text = { path = "crates/editor-text", version = "0.1.0" }
-editor-export = { path = "crates/editor-export", version = "0.1.0" }
-editor-effects = { path = "crates/editor-effects", version = "0.1.0" }
-editor-speech = { path = "crates/editor-speech", version = "0.1.0" }
+editor-core = { path = "crates/editor-core", version = "0.1.1" }
+editor-media = { path = "crates/editor-media", version = "0.1.1" }
+editor-project = { path = "crates/editor-project", version = "0.1.1" }
+editor-render = { path = "crates/editor-render", version = "0.1.1" }
+editor-text = { path = "crates/editor-text", version = "0.1.1" }
+editor-export = { path = "crates/editor-export", version = "0.1.1" }
+editor-effects = { path = "crates/editor-effects", version = "0.1.1" }
+editor-speech = { path = "crates/editor-speech", version = "0.1.1" }
 anyhow = "1"
 eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "wayland", "wgpu", "x11"] }
 egui = "0.37.0"

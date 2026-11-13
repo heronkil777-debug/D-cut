@@ -3,7 +3,7 @@
 D-cut is a local-first, open-source desktop video editor for Linux (Rust + egui/wgpu + FFmpeg),
 targeting Arch Linux and distributed as an AppImage. No account, no cloud, no telemetry.
 
-**Status: 0.1.0, early but usable.** Import video/audio, edit on a multi-track timeline
+**Status: 0.1.1, early but usable.** Import video/audio, edit on a multi-track timeline
 (split, trim, move, ripple delete, undo/redo), composite text and subtitles on the GPU,
 apply 45 effect packages (29 effects + 16 transitions) with keyframes, adjust audio per clip,
 use 540p proxies for heavy footage, autosave every 30 s, generate offline PT-BR captions

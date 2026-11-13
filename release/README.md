@@ -1,4 +1,4 @@
-# Publicação — D-cut 0.1.0
+# Publicação — D-cut 0.1.1
 
 Tudo o que é preciso para publicar está nesta pasta. Nenhum passo exige `sudo` na máquina de build.
 A publicação em si (push, tag, release, AUR) é feita por quem tem acesso ao GitHub e ao AUR.
@@ -6,7 +6,7 @@ A publicação em si (push, tag, release, AUR) é feita por quem tem acesso ao G
 ```
 release/
 ├── README.md                    # este roteiro
-├── RELEASE_NOTES-v0.1.0.md      # texto do release (usado pelo CI)
+├── RELEASE_NOTES-v0.1.1.md      # texto do release (usado pelo CI)
 ├── set-repo.sh                  # troca owner/repo em todos os lugares
 ├── fill-sha256sums.sh           # checksum do tarball da tag -> PKGBUILD
 ├── prepare-aur.sh               # gera .SRCINFO e a pasta pronta para o AUR
@@ -41,14 +41,14 @@ O CI (`checks`) roda `cargo fmt --check`, `clippy -D warnings`, `cargo test --wo
 ## 2. Crie a tag
 
 A tag dispara o job `appimage` (build em container Ubuntu 22.04 + `.zsync`) e o job `release`
-(publica o GitHub Release com os três artefatos, usando `release/RELEASE_NOTES-v0.1.0.md`).
+(publica o GitHub Release com os três artefatos, usando `release/RELEASE_NOTES-<tag>.md`).
 
 ```bash
-git tag -a v0.1.0 -m "D-cut 0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "D-cut 0.1.1"
+git push origin v0.1.1
 ```
 
-Se `v0.1.0` já estiver publicado, **não mova a tag**: crie `v0.1.1` (mova `pkgver` antes).
+Se a tag já estiver publicada, **não mova**: crie a próxima (`v0.1.2`, …) e mova `pkgver` antes.
 
 ## 3. Confira o release
 

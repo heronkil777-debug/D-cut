@@ -1,7 +1,7 @@
 # Maintainer: D-cut contributors
 # Source build of D-cut for Arch Linux. Not published to the AUR yet.
 pkgname=d-cut
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Local-first open-source video editor (Rust, wgpu, FFmpeg) — no account, no cloud, no telemetry"
 arch=('x86_64')
